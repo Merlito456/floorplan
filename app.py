@@ -1,15 +1,13 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import json
 from datetime import datetime
-import random
+import base64
 
 # Page configuration
 st.set_page_config(
-    page_title="Interactive Floor Plan Maker",
+    page_title="Advanced Floor Plan Maker - Drag & Drop",
     page_icon="🏗️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -28,31 +26,32 @@ st.markdown("""
         text-align: center;
         margin-bottom: 1rem;
     }
-    .tool-card {
-        background: white;
-        padding: 0.8rem;
+    .tool-btn {
+        padding: 10px;
+        margin: 5px;
         border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        margin: 0.3rem 0;
+        border: 2px solid #ddd;
+        background: white;
         cursor: pointer;
         transition: all 0.3s;
-        border: 2px solid transparent;
         text-align: center;
+        font-weight: 600;
     }
-    .tool-card:hover {
-        transform: scale(1.02);
+    .tool-btn:hover {
+        transform: scale(1.05);
         box-shadow: 0 4px 8px rgba(0,0,0,0.2);
     }
-    .tool-card.active {
+    .tool-btn.active {
         border-color: #1e3d59;
         background: #e8f0fe;
     }
-    .tool-card .icon {
-        font-size: 1.5rem;
-    }
-    .tool-card .label {
-        font-size: 0.9rem;
-        font-weight: 600;
+    .legend-box {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        margin-right: 8px;
+        border: 2px solid black;
+        border-radius: 3px;
     }
     .stButton > button {
         border-radius: 8px;
@@ -63,13 +62,11 @@ st.markdown("""
         transform: scale(1.02);
         box-shadow: 0 4px 8px rgba(0,0,0,0.2);
     }
-    .legend-box {
-        display: inline-block;
-        width: 20px;
-        height: 20px;
-        margin-right: 8px;
-        border: 2px solid black;
-        border-radius: 3px;
+    .canvas-container {
+        background: white;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        padding: 10px;
     }
     .instruction-banner {
         background: linear-gradient(90deg, #f0f4f8, #d9e2ec);
@@ -77,22 +74,6 @@ st.markdown("""
         border-radius: 8px;
         border-left: 4px solid #1e3d59;
         margin: 0.5rem 0;
-    }
-    .placement-indicator {
-        background: rgba(30, 61, 89, 0.1);
-        border: 2px dashed #1e3d59;
-        border-radius: 4px;
-        padding: 0.5rem;
-        text-align: center;
-        font-weight: 600;
-        color: #1e3d59;
-    }
-    .element-preview {
-        border: 2px solid #1e3d59;
-        border-radius: 4px;
-        padding: 0.5rem;
-        background: white;
-        margin: 0.2rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -112,32 +93,24 @@ if 'selected_tool' not in st.session_state:
     st.session_state.selected_tool = "Select"
 if 'selected_element' not in st.session_state:
     st.session_state.selected_element = None
-if 'mode' not in st.session_state:
-    st.session_state.mode = "view"  # "view", "place", "move", "delete"
-if 'placement_mode' not in st.session_state:
-    st.session_state.placement_mode = False
-if 'drag_element' not in st.session_state:
-    st.session_state.drag_element = None
-if 'mouse_x' not in st.session_state:
-    st.session_state.mouse_x = 50
-if 'mouse_y' not in st.session_state:
-    st.session_state.mouse_y = 50
+if 'canvas_data' not in st.session_state:
+    st.session_state.canvas_data = None
 
-# Element types with colors and icons
+# Element types with colors
 ELEMENT_TYPES = {
-    "Wall": {"color": "#8B7355", "icon": "▬", "category": "Structure", "draw_type": "rectangle"},
-    "Door": {"color": "#2E86AB", "icon": "🚪", "category": "Structure", "draw_type": "rectangle"},
-    "Rack": {"color": "#D3A04A", "icon": "📦", "category": "Equipment", "draw_type": "rectangle"},
-    "Cable Tray": {"color": "#6B8E23", "icon": "🪜", "category": "Cabling", "draw_type": "rectangle"},
-    "Cable Route Blue": {"color": "#0066CC", "icon": "🔵", "category": "Cabling", "draw_type": "line"},
-    "Cable Route Green": {"color": "#00CC66", "icon": "🟢", "category": "Cabling", "draw_type": "line"},
-    "Cable Route Black": {"color": "#333333", "icon": "⚫", "category": "Cabling", "draw_type": "line"},
-    "Cable Route Yellow": {"color": "#FFCC00", "icon": "🟡", "category": "Cabling", "draw_type": "line"},
-    "Cable Route Red": {"color": "#CC0000", "icon": "🔴", "category": "Cabling", "draw_type": "line"},
+    "Wall": {"color": "#8B7355", "bg_color": "#8B7355", "category": "Structure"},
+    "Door": {"color": "#2E86AB", "bg_color": "#2E86AB", "category": "Structure"},
+    "Rack": {"color": "#D3A04A", "bg_color": "#D3A04A", "category": "Equipment"},
+    "Cable Tray": {"color": "#6B8E23", "bg_color": "#6B8E23", "category": "Cabling"},
+    "Cable Route Blue": {"color": "#0066CC", "bg_color": "#0066CC", "category": "Cabling"},
+    "Cable Route Green": {"color": "#00CC66", "bg_color": "#00CC66", "category": "Cabling"},
+    "Cable Route Black": {"color": "#333333", "bg_color": "#333333", "category": "Cabling"},
+    "Cable Route Yellow": {"color": "#FFCC00", "bg_color": "#FFCC00", "category": "Cabling"},
+    "Cable Route Red": {"color": "#CC0000", "bg_color": "#CC0000", "category": "Cabling"},
 }
 
 # Helper functions
-def add_element(element_type, x, y, width, height, label="", rotation=0):
+def add_element(element_type, x, y, width, height, label=""):
     """Add a new element to the floor plan"""
     st.session_state.elements.append({
         'id': st.session_state.element_id,
@@ -147,9 +120,7 @@ def add_element(element_type, x, y, width, height, label="", rotation=0):
         'width': width,
         'height': height,
         'label': label,
-        'rotation': rotation,
         'color': ELEMENT_TYPES[element_type]["color"],
-        'icon': ELEMENT_TYPES[element_type]["icon"],
         'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
     st.session_state.element_id += 1
@@ -189,335 +160,56 @@ def import_from_json(json_data):
     except:
         return False
 
-def snap_to_grid(value):
-    """Snap value to grid"""
-    grid = st.session_state.grid_size
-    return round(value / grid) * grid
-
-def create_floor_plan_figure():
-    """Create the floor plan visualization using Plotly"""
-    fig = go.Figure()
-    
-    canvas_size = 500
-    
-    # Add grid if enabled
-    if st.session_state.show_grid:
-        grid_size = st.session_state.grid_size
-        for x in range(0, canvas_size + grid_size, grid_size):
-            fig.add_shape(
-                type="line", x0=x, y0=0, x1=x, y1=canvas_size,
-                line=dict(color="rgba(200, 200, 200, 0.3)", width=0.5),
-                layer="below"
-            )
-        for y in range(0, canvas_size + grid_size, grid_size):
-            fig.add_shape(
-                type="line", x0=0, y0=y, x1=canvas_size, y1=y,
-                line=dict(color="rgba(200, 200, 200, 0.3)", width=0.5),
-                layer="below"
-            )
-    
-    # Add elements
-    for elem in st.session_state.elements:
-        x, y = elem['x'], elem['y']
-        w, h = elem['width'], elem['height']
-        color = elem['color']
-        label = elem['label']
-        elem_type = elem['type']
-        is_selected = (st.session_state.selected_element == elem['id'])
-        
-        border_color = "red" if is_selected else "black"
-        border_width = 3 if is_selected else 2
-        
-        if elem_type == "Wall":
-            fig.add_shape(
-                type="rect", x0=x, y0=y, x1=x+w, y1=y+h,
-                fillcolor=color, 
-                line=dict(color=border_color, width=border_width),
-                opacity=0.8,
-                layer="above"
-            )
-            fig.add_annotation(
-                x=x+w/2, y=y+h/2,
-                text="▬",
-                font=dict(size=20, color="white"),
-                showarrow=False,
-                opacity=0.5
-            )
-        elif elem_type == "Door":
-            fig.add_shape(
-                type="rect", x0=x, y0=y, x1=x+w, y1=y+h,
-                fillcolor=color, 
-                line=dict(color=border_color, width=border_width),
-                opacity=0.6,
-                layer="above"
-            )
-            fig.add_shape(
-                type="path",
-                path=f"M {x+w} {y} A {w} {h} 0 0 0 {x} {y+h}",
-                line=dict(color=border_color, width=border_width),
-                layer="above"
-            )
-        elif elem_type == "Rack":
-            fig.add_shape(
-                type="rect", x0=x, y0=y, x1=x+w, y1=y+h,
-                fillcolor=color, 
-                line=dict(color=border_color, width=border_width),
-                opacity=0.9,
-                layer="above"
-            )
-            for i in range(1, 4):
-                shelf_y = y + (h * i / 4)
-                fig.add_shape(
-                    type="line", x0=x+2, y0=shelf_y, x1=x+w-2, y1=shelf_y,
-                    line=dict(color="black", width=1.5),
-                    layer="above"
-                )
-            fig.add_shape(
-                type="line", x0=x+w/2, y0=y, x1=x+w/2, y1=y+h,
-                line=dict(color="black", width=1, dash="dot"),
-                layer="above"
-            )
-        elif elem_type == "Cable Tray":
-            fig.add_shape(
-                type="rect", x0=x, y0=y, x1=x+w, y1=y+h,
-                fillcolor=color, 
-                line=dict(color=border_color, width=border_width),
-                opacity=0.7,
-                layer="above"
-            )
-            for i in range(1, 6):
-                rung_x = x + (w * i / 6)
-                fig.add_shape(
-                    type="line", x0=rung_x, y0=y+2, x1=rung_x, y1=y+h-2,
-                    line=dict(color="black", width=1.5),
-                    layer="above"
-                )
-            fig.add_shape(
-                type="line", x0=x, y0=y+2, x1=x+w, y1=y+2,
-                line=dict(color="black", width=1.5),
-                layer="above"
-            )
-            fig.add_shape(
-                type="line", x0=x, y0=y+h-2, x1=x+w, y1=y+h-2,
-                line=dict(color="black", width=1.5),
-                layer="above"
-            )
-        elif "Cable Route" in elem_type:
-            fig.add_shape(
-                type="line", x0=x, y0=y, x1=x+w, y1=y+h,
-                line=dict(color="black", width=8, dash="solid"),
-                layer="above"
-            )
-            fig.add_shape(
-                type="line", x0=x, y0=y, x1=x+w, y1=y+h,
-                line=dict(color=color, width=5, dash="solid"),
-                layer="above"
-            )
-            arrow_size = 12
-            dx, dy = w, h
-            length = np.sqrt(dx**2 + dy**2)
-            if length > 0:
-                ux, uy = dx/length, dy/length
-                fig.add_shape(
-                    type="path",
-                    path=f"M {x+w} {y+h} L {x+w - arrow_size*ux + arrow_size*uy/2} {y+h - arrow_size*uy - arrow_size*ux/2} L {x+w - arrow_size*ux - arrow_size*uy/2} {y+h - arrow_size*uy + arrow_size*ux/2} Z",
-                    fillcolor="black", 
-                    line=dict(color="black", width=1),
-                    layer="above"
-                )
-                fig.add_shape(
-                    type="path",
-                    path=f"M {x+w-2} {y+h-2} L {x+w - (arrow_size-3)*ux + (arrow_size-3)*uy/2} {y+h - (arrow_size-3)*uy - (arrow_size-3)*ux/2} L {x+w - (arrow_size-3)*ux - (arrow_size-3)*uy/2} {y+h - (arrow_size-3)*uy + (arrow_size-3)*ux/2} Z",
-                    fillcolor=color, 
-                    line=dict(color="black", width=0.5),
-                    layer="above"
-                )
-        
-        if label:
-            fig.add_annotation(
-                x=x+w/2, y=y+h/2,
-                text=f"{label}",
-                font=dict(size=10, color="white", family="Arial Black"),
-                showarrow=False,
-                bgcolor="rgba(0,0,0,0.7)",
-                borderpad=3,
-                font_color="white",
-                border_color="black",
-                border_width=1
-            )
-        
-        if w > 20 or h > 20:
-            fig.add_annotation(
-                x=x+w/2, y=y-8,
-                text=f"{w}×{h}",
-                font=dict(size=9, color="#333", family="Arial"),
-                showarrow=False,
-                bgcolor="rgba(255,255,255,0.8)",
-                borderpad=2,
-                border_color="black",
-                border_width=0.5
-            )
-    
-    # Add placement preview if in placement mode
-    if st.session_state.placement_mode:
-        x = st.session_state.mouse_x
-        y = st.session_state.mouse_y
-        w = st.session_state.get('preview_width', 40)
-        h = st.session_state.get('preview_height', 30)
-        elem_type = st.session_state.get('preview_type', 'Wall')
-        color = ELEMENT_TYPES[elem_type]["color"]
-        
-        fig.add_shape(
-            type="rect", x0=x, y0=y, x1=x+w, y1=y+h,
-            fillcolor=color,
-            line=dict(color="red", width=2, dash="dash"),
-            opacity=0.5,
-            layer="above"
-        )
-        fig.add_annotation(
-            x=x+w/2, y=y-15,
-            text="📍 Click to place",
-            font=dict(size=10, color="red"),
-            showarrow=True,
-            arrowhead=1,
-            arrowcolor="red"
-        )
-    
-    fig.update_layout(
-        width=900,
-        height=700,
-        xaxis=dict(
-            range=[-10, 510],
-            showgrid=False,
-            zeroline=False,
-            showticklabels=True,
-            tickfont=dict(size=8),
-            fixedrange=False
-        ),
-        yaxis=dict(
-            range=[-10, 510],
-            showgrid=False,
-            zeroline=False,
-            showticklabels=True,
-            tickfont=dict(size=8),
-            scaleanchor="x",
-            scaleratio=1,
-            fixedrange=False
-        ),
-        plot_bgcolor='white',
-        margin=dict(l=50, r=50, t=50, b=50),
-        hovermode='closest',
-        dragmode='pan',
-        title=dict(
-            text=f"📐 {st.session_state.floor_name}",
-            font=dict(size=24, color="#1e3d59")
-        ),
-        clickmode='event+select'
-    )
-    
-    return fig
+def get_elements_json():
+    """Get elements as JSON string for JavaScript"""
+    return json.dumps(st.session_state.elements)
 
 # Main UI
-st.markdown('<div class="main-header">🏗️ Interactive Floor Plan Maker</div>', unsafe_allow_html=True)
-
-# Instruction banner
-mode_instructions = {
-    "Select": "🖱️ Click on elements to select them. Selected elements show a red border.",
-    "Place": "✏️ Click anywhere on the canvas to place the selected element type.",
-    "Move": "✋ Click on an element to select it, then use the slider below to move it.",
-    "Delete": "🗑️ Click on an element to delete it."
-}
-
-current_instruction = mode_instructions.get(st.session_state.selected_tool, "Select a tool to begin")
-st.markdown(f"""
-<div class="instruction-banner">
-    {current_instruction}
-</div>
-""", unsafe_allow_html=True)
+st.markdown('<div class="main-header">🏗️ Advanced Floor Plan Maker - Drag & Drop</div>', unsafe_allow_html=True)
 
 # Sidebar - Controls
 with st.sidebar:
     st.markdown("## 🎨 Tools")
     
-    # Tool selection with better UI
-    tools = ["Select", "Place", "Move", "Delete"]
+    # Tool selection
+    tools = ["Select", "Draw", "Move", "Delete"]
     tool_icons = ["👆", "✏️", "✋", "🗑️"]
-    tool_descriptions = ["Click to select", "Click to place", "Click & drag", "Click to delete"]
     
-    for tool, icon, desc in zip(tools, tool_icons, tool_descriptions):
+    for tool, icon in zip(tools, tool_icons):
         is_active = st.session_state.selected_tool == tool
-        col1, col2 = st.columns([1, 4])
-        with col1:
-            st.markdown(f"<div style='font-size:1.5rem;'>{icon}</div>", unsafe_allow_html=True)
-        with col2:
-            if st.button(
-                f"{tool}",
-                use_container_width=True,
-                type="primary" if is_active else "secondary"
-            ):
-                st.session_state.selected_tool = tool
-                if tool == "Place":
-                    st.session_state.placement_mode = True
-                else:
-                    st.session_state.placement_mode = False
-                st.rerun()
-            st.caption(desc)
+        if st.button(
+            f"{icon} {tool}",
+            use_container_width=True,
+            type="primary" if is_active else "secondary"
+        ):
+            st.session_state.selected_tool = tool
+            st.rerun()
     
     st.markdown("---")
     
-    # Element type selection (only visible in Place mode)
-    if st.session_state.selected_tool == "Place":
-        st.markdown("### 📐 Element Type")
-        
-        # Grid of element types
-        cols = st.columns(2)
-        for idx, (elem_type, info) in enumerate(ELEMENT_TYPES.items()):
-            with cols[idx % 2]:
-                is_selected = st.session_state.get('preview_type') == elem_type
-                if st.button(
-                    f"{info['icon']} {elem_type[:12]}",
-                    use_container_width=True,
-                    type="primary" if is_selected else "secondary"
-                ):
-                    st.session_state.preview_type = elem_type
-                    st.rerun()
-        
-        st.markdown("---")
-        st.markdown("### 📏 Size Controls")
-        
-        # Size controls for placement
-        col1, col2 = st.columns(2)
-        with col1:
-            st.session_state.preview_width = st.slider(
-                "Width",
-                10, 100, 40, 5,
-                key="place_width"
-            )
-        with col2:
-            st.session_state.preview_height = st.slider(
-                "Height",
-                10, 100, 30, 5,
-                key="place_height"
-            )
-        
-        # Label input
-        st.session_state.place_label = st.text_input("Label (optional)", "")
-        
-        # Position preview
-        st.markdown("### 📍 Position")
-        st.markdown(f"X: {st.session_state.mouse_x}, Y: {st.session_state.mouse_y}")
-        
-        # Place button
-        if st.button("📍 Place at Current Position", use_container_width=True, type="primary"):
-            elem_type = st.session_state.get('preview_type', 'Wall')
-            label = st.session_state.get('place_label', '')
-            x = snap_to_grid(st.session_state.mouse_x)
-            y = snap_to_grid(st.session_state.mouse_y)
-            w = snap_to_grid(st.session_state.preview_width)
-            h = snap_to_grid(st.session_state.preview_height)
-            add_element(elem_type, x, y, w, h, label)
-            st.success(f"✅ Added {elem_type}")
-            st.rerun()
+    # Element type selection for drawing
+    st.markdown("### 📐 Element Type")
+    element_type = st.selectbox(
+        "Select type to draw",
+        list(ELEMENT_TYPES.keys()),
+        key="draw_type"
+    )
+    
+    # Show element info
+    info = ELEMENT_TYPES[element_type]
+    st.info(f"📌 {info['category']}")
+    
+    st.markdown("---")
+    
+    # Properties
+    st.markdown("### 🏷️ Properties")
+    draw_label = st.text_input("Label", "", key="draw_label")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        default_width = st.number_input("Width", 20, 200, 40, 5, key="draw_width")
+    with col2:
+        default_height = st.number_input("Height", 20, 200, 30, 5, key="draw_height")
     
     st.markdown("---")
     
@@ -526,66 +218,24 @@ with st.sidebar:
     st.session_state.show_grid = st.checkbox("Show Grid", st.session_state.show_grid)
     st.session_state.grid_size = st.slider("Grid Size", 10, 50, 20, 5)
     
-    # Move controls (visible in Move mode)
-    if st.session_state.selected_tool == "Move" and st.session_state.selected_element is not None:
-        st.markdown("---")
-        st.markdown("### 🔄 Move Selected Element")
-        
-        # Find the selected element
-        selected = None
-        for elem in st.session_state.elements:
-            if elem['id'] == st.session_state.selected_element:
-                selected = elem
-                break
-        
-        if selected:
-            st.markdown(f"**{selected['type']}** - ID: {selected['id']}")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                new_x = st.slider(
-                    "X Position",
-                    0, 460, selected['x'], 10,
-                    key="move_x"
-                )
-            with col2:
-                new_y = st.slider(
-                    "Y Position",
-                    0, 460, selected['y'], 10,
-                    key="move_y"
-                )
-            
-            if st.button("🔄 Update Position", use_container_width=True):
-                # Update element position
-                for elem in st.session_state.elements:
-                    if elem['id'] == st.session_state.selected_element:
-                        elem['x'] = snap_to_grid(new_x)
-                        elem['y'] = snap_to_grid(new_y)
-                        st.success("✅ Position updated!")
-                        st.rerun()
-                        break
-    
     st.markdown("---")
     
     # Export/Import
     st.markdown("### 💾 Export/Import")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("📤 Export", use_container_width=True):
-            json_data = export_to_json()
-            st.download_button(
-                label="📥 Download JSON",
-                data=json_data,
-                file_name=f"{st.session_state.floor_name.replace(' ', '_')}.json",
-                mime="application/json",
-                use_container_width=True
-            )
+    if st.button("📤 Export JSON", use_container_width=True):
+        json_data = export_to_json()
+        st.download_button(
+            label="📥 Download",
+            data=json_data,
+            file_name=f"{st.session_state.floor_name.replace(' ', '_')}.json",
+            mime="application/json",
+            use_container_width=True
+        )
     
-    with col2:
-        if st.button("🗑️ Clear All", use_container_width=True, type="secondary"):
-            clear_all_elements()
-            st.rerun()
+    if st.button("🗑️ Clear All", use_container_width=True, type="secondary"):
+        clear_all_elements()
+        st.rerun()
     
     uploaded_file = st.file_uploader("📥 Import JSON", type=['json'])
     if uploaded_file is not None:
@@ -605,34 +255,518 @@ with st.sidebar:
         st.markdown(
             f'<div style="display:flex; align-items:center; margin:2px 0;">'
             f'<span class="legend-box" style="background:{info["color"]};"></span>'
-            f'<span style="font-size:0.9rem;">{info["icon"]} {elem_type}</span>'
+            f'<span style="font-size:0.9rem;">{elem_type}</span>'
             f'</div>',
             unsafe_allow_html=True
         )
     
-    # Element count
-    st.markdown("---")
     st.metric("Total Elements", len(st.session_state.elements))
 
-# Main content area
+# Main content
 tab1, tab2, tab3 = st.tabs(["📐 Floor Plan", "📋 Element List", "📊 Statistics"])
 
 with tab1:
-    # Create and display the floor plan
-    fig = create_floor_plan_figure()
+    st.markdown("""
+    <div class="instruction-banner">
+        🎯 <b>Instructions:</b> 
+        Select a tool from the sidebar → Click and drag on the canvas to draw or move elements
+    </div>
+    """, unsafe_allow_html=True)
     
-    # Display the plot
-    config = {
-        'displayModeBar': True,
-        'modeBarButtonsToAdd': ['drawrect', 'drawline', 'eraseshape'],
-        'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
-        'displaylogo': False,
-        'scrollZoom': True,
-        'doubleClick': 'reset'
-    }
+    # Canvas container
+    st.markdown('<div class="canvas-container">', unsafe_allow_html=True)
     
-    # Use plotly with click events
-    event = st.plotly_chart(fig, use_container_width=True, config=config, key="floor_plan")
+    # Create HTML with JavaScript canvas
+    elements_json = get_elements_json()
+    selected_tool = st.session_state.selected_tool
+    element_type = st.session_state.get('draw_type', 'Wall')
+    draw_label = st.session_state.get('draw_label', '')
+    draw_width = st.session_state.get('draw_width', 40)
+    draw_height = st.session_state.get('draw_height', 30)
+    show_grid = st.session_state.show_grid
+    grid_size = st.session_state.grid_size
+    selected_element = st.session_state.selected_element
+    
+    html_code = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            body {{ margin: 0; padding: 0; background: white; }}
+            #canvas {{
+                display: block;
+                width: 100%;
+                height: 700px;
+                cursor: crosshair;
+                border: 2px solid #ddd;
+                border-radius: 8px;
+                background: white;
+            }}
+            #tooltip {{
+                position: absolute;
+                background: rgba(0,0,0,0.8);
+                color: white;
+                padding: 4px 8px;
+                border-radius: 4px;
+                font-size: 12px;
+                pointer-events: none;
+                display: none;
+            }}
+            .element-label {{
+                font-size: 11px;
+                font-weight: bold;
+                color: white;
+                text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+                pointer-events: none;
+                text-align: center;
+            }}
+        </style>
+    </head>
+    <body>
+        <canvas id="canvas"></canvas>
+        <div id="tooltip"></div>
+        
+        <script>
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Set canvas size
+            function resizeCanvas() {{
+                const rect = canvas.parentElement.getBoundingClientRect();
+                canvas.width = rect.width - 4;
+                canvas.height = 700;
+            }}
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+            
+            // State
+            let elements = {elements_json};
+            let selectedTool = '{selected_tool}';
+            let elementType = '{element_type}';
+            let drawLabel = '{draw_label}';
+            let drawWidth = {draw_width};
+            let drawHeight = {draw_height};
+            let showGrid = {str(show_grid).lower()};
+            let gridSize = {grid_size};
+            let selectedElementId = {selected_element if selected_element is not None else 'null'};
+            
+            // Drawing state
+            let isDrawing = false;
+            let startX = 0;
+            let startY = 0;
+            let currentX = 0;
+            let currentY = 0;
+            let isDragging = false;
+            let dragElementId = null;
+            let dragOffsetX = 0;
+            let dragOffsetY = 0;
+            let hoveredElement = null;
+            
+            // Element colors
+            const elementColors = {json.dumps({k: v["color"] for k, v in ELEMENT_TYPES.items()})};
+            
+            // Get element color
+            function getElementColor(type) {{
+                return elementColors[type] || '#888';
+            }}
+            
+            // Snap to grid
+            function snapToGrid(value) {{
+                return Math.round(value / gridSize) * gridSize;
+            }}
+            
+            // Draw grid
+            function drawGrid() {{
+                if (!showGrid) return;
+                ctx.strokeStyle = 'rgba(200, 200, 200, 0.3)';
+                ctx.lineWidth = 0.5;
+                
+                for (let x = 0; x <= canvas.width; x += gridSize) {{
+                    ctx.beginPath();
+                    ctx.moveTo(x, 0);
+                    ctx.lineTo(x, canvas.height);
+                    ctx.stroke();
+                }}
+                
+                for (let y = 0; y <= canvas.height; y += gridSize) {{
+                    ctx.beginPath();
+                    ctx.moveTo(0, y);
+                    ctx.lineTo(canvas.width, y);
+                    ctx.stroke();
+                }}
+            }}
+            
+            // Draw an element
+            function drawElement(elem) {{
+                const x = elem.x;
+                const y = elem.y;
+                const w = elem.width;
+                const h = elem.height;
+                const color = elem.color;
+                const type = elem.type;
+                const label = elem.label || '';
+                const isSelected = (selectedElementId === elem.id);
+                
+                ctx.save();
+                
+                // Draw shape based on type
+                ctx.shadowColor = 'rgba(0,0,0,0.1)';
+                ctx.shadowBlur = 4;
+                ctx.shadowOffsetX = 2;
+                ctx.shadowOffsetY = 2;
+                
+                if (type === 'Wall') {{
+                    ctx.fillStyle = color;
+                    ctx.fillRect(x, y, w, h);
+                    ctx.shadowBlur = 0;
+                    ctx.strokeStyle = isSelected ? 'red' : 'black';
+                    ctx.lineWidth = isSelected ? 3 : 2;
+                    ctx.strokeRect(x, y, w, h);
+                    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                    ctx.font = '20px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('▬', x + w/2, y + h/2);
+                }} else if (type === 'Door') {{
+                    ctx.fillStyle = color;
+                    ctx.fillRect(x, y, w, h);
+                    ctx.shadowBlur = 0;
+                    ctx.strokeStyle = isSelected ? 'red' : 'black';
+                    ctx.lineWidth = isSelected ? 3 : 2;
+                    ctx.strokeRect(x, y, w, h);
+                    ctx.beginPath();
+                    ctx.arc(x + w, y, w, -Math.PI/2, 0);
+                    ctx.strokeStyle = isSelected ? 'red' : 'black';
+                    ctx.lineWidth = isSelected ? 3 : 2;
+                    ctx.stroke();
+                }} else if (type === 'Rack') {{
+                    ctx.fillStyle = color;
+                    ctx.fillRect(x, y, w, h);
+                    ctx.shadowBlur = 0;
+                    ctx.strokeStyle = isSelected ? 'red' : 'black';
+                    ctx.lineWidth = isSelected ? 3 : 2;
+                    ctx.strokeRect(x, y, w, h);
+                    // Shelves
+                    ctx.strokeStyle = 'black';
+                    ctx.lineWidth = 1.5;
+                    for (let i = 1; i < 4; i++) {{
+                        const shelfY = y + (h * i / 4);
+                        ctx.beginPath();
+                        ctx.moveTo(x + 2, shelfY);
+                        ctx.lineTo(x + w - 2, shelfY);
+                        ctx.stroke();
+                    }}
+                    // Vertical line
+                    ctx.setLineDash([4, 4]);
+                    ctx.beginPath();
+                    ctx.moveTo(x + w/2, y);
+                    ctx.lineTo(x + w/2, y + h);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }} else if (type === 'Cable Tray') {{
+                    ctx.fillStyle = color;
+                    ctx.fillRect(x, y, w, h);
+                    ctx.shadowBlur = 0;
+                    ctx.strokeStyle = isSelected ? 'red' : 'black';
+                    ctx.lineWidth = isSelected ? 3 : 2;
+                    ctx.strokeRect(x, y, w, h);
+                    // Ladder rungs
+                    ctx.strokeStyle = 'black';
+                    ctx.lineWidth = 1.5;
+                    for (let i = 1; i < 6; i++) {{
+                        const rungX = x + (w * i / 6);
+                        ctx.beginPath();
+                        ctx.moveTo(rungX, y + 2);
+                        ctx.lineTo(rungX, y + h - 2);
+                        ctx.stroke();
+                    }}
+                    // Side rails
+                    ctx.beginPath();
+                    ctx.moveTo(x, y + 2);
+                    ctx.lineTo(x + w, y + 2);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(x, y + h - 2);
+                    ctx.lineTo(x + w, y + h - 2);
+                    ctx.stroke();
+                }} else if (type.includes('Cable Route')) {{
+                    // Cable route with arrow
+                    ctx.shadowBlur = 0;
+                    ctx.strokeStyle = 'black';
+                    ctx.lineWidth = 8;
+                    ctx.beginPath();
+                    ctx.moveTo(x, y);
+                    ctx.lineTo(x + w, y + h);
+                    ctx.stroke();
+                    
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 5;
+                    ctx.beginPath();
+                    ctx.moveTo(x, y);
+                    ctx.lineTo(x + w, y + h);
+                    ctx.stroke();
+                    
+                    // Arrow
+                    const angle = Math.atan2(h, w);
+                    const arrowSize = 12;
+                    const endX = x + w;
+                    const endY = y + h;
+                    
+                    ctx.fillStyle = 'black';
+                    ctx.beginPath();
+                    ctx.moveTo(endX, endY);
+                    ctx.lineTo(endX - arrowSize * Math.cos(angle - 0.5), endY - arrowSize * Math.sin(angle - 0.5));
+                    ctx.lineTo(endX - arrowSize * Math.cos(angle + 0.5), endY - arrowSize * Math.sin(angle + 0.5));
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    ctx.fillStyle = color;
+                    ctx.beginPath();
+                    ctx.moveTo(endX - 2, endY - 2);
+                    ctx.lineTo(endX - (arrowSize-3) * Math.cos(angle - 0.5), endY - (arrowSize-3) * Math.sin(angle - 0.5));
+                    ctx.lineTo(endX - (arrowSize-3) * Math.cos(angle + 0.5), endY - (arrowSize-3) * Math.sin(angle + 0.5));
+                    ctx.closePath();
+                    ctx.fill();
+                }}
+                
+                // Draw label
+                if (label) {{
+                    ctx.shadowBlur = 0;
+                    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+                    const labelX = x + w/2;
+                    const labelY = y + h/2;
+                    ctx.font = 'bold 10px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    const metrics = ctx.measureText(label);
+                    const padding = 4;
+                    const rectWidth = metrics.width + padding * 2;
+                    const rectHeight = 20;
+                    ctx.fillRect(labelX - rectWidth/2, labelY - rectHeight/2, rectWidth, rectHeight);
+                    ctx.fillStyle = 'white';
+                    ctx.fillText(label, labelX, labelY);
+                }}
+                
+                // Draw size indicator
+                if (w > 20 || h > 20) {{
+                    ctx.shadowBlur = 0;
+                    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+                    const sizeText = `${w}×${h}`;
+                    ctx.font = '9px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'bottom';
+                    const metrics = ctx.measureText(sizeText);
+                    const padding = 2;
+                    const rectWidth = metrics.width + padding * 2;
+                    const rectHeight = 14;
+                    ctx.fillRect(x + w/2 - rectWidth/2, y - rectHeight - 2, rectWidth, rectHeight);
+                    ctx.strokeStyle = 'black';
+                    ctx.lineWidth = 0.5;
+                    ctx.strokeRect(x + w/2 - rectWidth/2, y - rectHeight - 2, rectWidth, rectHeight);
+                    ctx.fillStyle = '#333';
+                    ctx.textBaseline = 'bottom';
+                    ctx.fillText(sizeText, x + w/2, y - 2);
+                }}
+                
+                ctx.restore();
+            }}
+            
+            // Main draw function
+            function draw() {{
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                // Draw grid
+                drawGrid();
+                
+                // Draw all elements
+                elements.forEach(elem => {{
+                    drawElement(elem);
+                }});
+                
+                // Draw preview for drawing
+                if (isDrawing) {{
+                    ctx.save();
+                    ctx.strokeStyle = 'red';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([5, 5]);
+                    const x = Math.min(startX, currentX);
+                    const y = Math.min(startY, currentY);
+                    const w = Math.abs(currentX - startX);
+                    const h = Math.abs(currentY - startY);
+                    ctx.strokeRect(x, y, w, h);
+                    ctx.fillStyle = getElementColor(elementType);
+                    ctx.globalAlpha = 0.3;
+                    ctx.fillRect(x, y, w, h);
+                    ctx.restore();
+                }}
+            }}
+            
+            // Mouse events for drawing and dragging
+            canvas.addEventListener('mousedown', function(e) {{
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const x = (e.clientX - rect.left) * scaleX;
+                const y = (e.clientY - rect.top) * scaleY;
+                
+                if (selectedTool === 'Draw') {{
+                    isDrawing = true;
+                    startX = x;
+                    startY = y;
+                    currentX = x;
+                    currentY = y;
+                }} else if (selectedTool === 'Select' || selectedTool === 'Move') {{
+                    // Check if clicked on an element
+                    for (let i = elements.length - 1; i >= 0; i--) {{
+                        const elem = elements[i];
+                        if (x >= elem.x && x <= elem.x + elem.width &&
+                            y >= elem.y && y <= elem.y + elem.height) {{
+                            selectedElementId = elem.id;
+                            if (selectedTool === 'Move') {{
+                                isDragging = true;
+                                dragElementId = elem.id;
+                                dragOffsetX = x - elem.x;
+                                dragOffsetY = y - elem.y;
+                            }}
+                            // Send selection to Python
+                            window.parent.postMessage({{
+                                type: 'select_element',
+                                id: elem.id
+                            }}, '*');
+                            draw();
+                            return;
+                        }}
+                    }}
+                    // Click on empty space
+                    selectedElementId = null;
+                    window.parent.postMessage({{
+                        type: 'select_element',
+                        id: null
+                    }}, '*');
+                    draw();
+                }} else if (selectedTool === 'Delete') {{
+                    // Check if clicked on an element
+                    for (let i = elements.length - 1; i >= 0; i--) {{
+                        const elem = elements[i];
+                        if (x >= elem.x && x <= elem.x + elem.width &&
+                            y >= elem.y && y <= elem.y + elem.height) {{
+                            // Send delete request to Python
+                            window.parent.postMessage({{
+                                type: 'delete_element',
+                                id: elem.id
+                            }}, '*');
+                            return;
+                        }}
+                    }}
+                }}
+            }});
+            
+            canvas.addEventListener('mousemove', function(e) {{
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const x = (e.clientX - rect.left) * scaleX;
+                const y = (e.clientY - rect.top) * scaleY;
+                
+                if (isDrawing) {{
+                    currentX = x;
+                    currentY = y;
+                    draw();
+                }} else if (isDragging && dragElementId !== null) {{
+                    const elem = elements.find(e => e.id === dragElementId);
+                    if (elem) {{
+                        let newX = snapToGrid(x - dragOffsetX);
+                        let newY = snapToGrid(y - dragOffsetY);
+                        newX = Math.max(0, Math.min(newX, canvas.width - elem.width));
+                        newY = Math.max(0, Math.min(newY, canvas.height - elem.height));
+                        elem.x = newX;
+                        elem.y = newY;
+                        // Send update to Python
+                        window.parent.postMessage({{
+                            type: 'move_element',
+                            id: elem.id,
+                            x: newX,
+                            y: newY
+                        }}, '*');
+                        draw();
+                    }}
+                }}
+            }});
+            
+            canvas.addEventListener('mouseup', function(e) {{
+                if (isDrawing) {{
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = canvas.width / rect.width;
+                    const scaleY = canvas.height / rect.height;
+                    const x = (e.clientX - rect.left) * scaleX;
+                    const y = (e.clientY - rect.top) * scaleY;
+                    
+                    const x1 = snapToGrid(Math.min(startX, x));
+                    const y1 = snapToGrid(Math.min(startY, y));
+                    const w = snapToGrid(Math.abs(x - startX));
+                    const h = snapToGrid(Math.abs(y - startY));
+                    
+                    if (w > 5 && h > 5) {{
+                        // Send new element to Python
+                        window.parent.postMessage({{
+                            type: 'add_element',
+                            elementType: elementType,
+                            x: x1,
+                            y: y1,
+                            width: w,
+                            height: h,
+                            label: drawLabel
+                        }}, '*');
+                    }}
+                    
+                    isDrawing = false;
+                    draw();
+                }}
+                
+                if (isDragging) {{
+                    isDragging = false;
+                    dragElementId = null;
+                }}
+            }});
+            
+            canvas.addEventListener('mouseleave', function() {{
+                if (isDrawing) {{
+                    isDrawing = false;
+                    draw();
+                }}
+                if (isDragging) {{
+                    isDragging = false;
+                    dragElementId = null;
+                }}
+            }});
+            
+            // Listen for messages from Python
+            window.addEventListener('message', function(event) {{
+                if (event.data.type === 'update_elements') {{
+                    elements = event.data.elements;
+                    selectedElementId = event.data.selectedElement;
+                    draw();
+                }}
+            }});
+            
+            // Initial draw
+            draw();
+            
+            // Handle canvas resize
+            window.addEventListener('resize', function() {{
+                resizeCanvas();
+                draw();
+            }});
+        </script>
+    </body>
+    </html>
+    """
+    
+    # Display the HTML canvas
+    st.components.v1.html(html_code, height=720, scrolling=False)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
     
     # Quick stats
     col1, col2, col3, col4 = st.columns(4)
@@ -657,10 +791,10 @@ with tab2:
         
         st.dataframe(display_df, use_container_width=True, height=400)
         
-        # Quick actions
-        col1, col2, col3 = st.columns([2, 1, 1])
+        # Delete specific element
+        col1, col2 = st.columns([3, 1])
         with col1:
-            delete_id = st.number_input("Enter ID to delete or select", min_value=0, step=1)
+            delete_id = st.number_input("Enter ID to delete", min_value=0, step=1)
         with col2:
             if st.button("🗑️ Delete", use_container_width=True):
                 if delete_id in df['id'].values:
@@ -669,20 +803,11 @@ with tab2:
                     st.rerun()
                 else:
                     st.error("❌ ID not found")
-        with col3:
-            if st.button("🎯 Select", use_container_width=True):
-                if delete_id in df['id'].values:
-                    st.session_state.selected_element = delete_id
-                    st.session_state.selected_tool = "Select"
-                    st.success(f"✅ Selected element {delete_id}")
-                    st.rerun()
-                else:
-                    st.error("❌ ID not found")
     else:
-        st.info("No elements added yet. Use the Place tool to add elements!")
+        st.info("No elements added yet. Use the Draw tool to add elements!")
 
 with tab3:
-    # Statistics and analytics
+    # Statistics
     st.markdown("### 📊 Floor Plan Analytics")
     
     if st.session_state.elements:
@@ -701,13 +826,6 @@ with tab3:
             st.write(f"**Average Height:** {df['height'].mean():.1f}")
             if len(df) > 0:
                 st.write(f"**Largest Element:** {df.loc[df['width'].idxmax(), 'type']} ({df['width'].max()}×{df.loc[df['width'].idxmax(), 'height']})")
-        
-        cable_routes = [e for e in st.session_state.elements if "Cable Route" in e['type']]
-        if cable_routes:
-            st.markdown("#### Cable Route Summary")
-            cable_df = pd.DataFrame(cable_routes)
-            cable_summary = cable_df.groupby('type').size().reset_index(name='count')
-            st.dataframe(cable_summary, use_container_width=True)
     else:
         st.info("Add elements to see statistics")
 
@@ -716,7 +834,7 @@ st.markdown("---")
 st.markdown(
     """
     <div style="text-align: center; color: #666; font-size: 0.9rem;">
-        🏗️ Interactive Floor Plan Maker | Select a tool to start designing
+        🏗️ Advanced Floor Plan Maker | Click & Drag to Draw | Drag to Move | Select & Delete
     </div>
     """,
     unsafe_allow_html=True
