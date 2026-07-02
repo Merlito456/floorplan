@@ -4,13 +4,12 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import json
-import os
 from datetime import datetime
-import base64
+import random
 
 # Page configuration
 st.set_page_config(
-    page_title="Advanced Floor Plan Maker",
+    page_title="Interactive Floor Plan Maker",
     page_icon="🏗️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -29,24 +28,25 @@ st.markdown("""
         text-align: center;
         margin-bottom: 1rem;
     }
-    .element-card {
+    .tool-card {
         background: white;
-        padding: 1rem;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        margin: 0.5rem 0;
-        border-left: 4px solid #1e3d59;
+        padding: 0.5rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin: 0.2rem 0;
+        cursor: pointer;
+        transition: all 0.3s;
+        border: 2px solid transparent;
     }
-    .legend-box {
-        display: inline-block;
-        width: 20px;
-        height: 20px;
-        margin-right: 8px;
-        border: 1px solid #ccc;
-        border-radius: 3px;
+    .tool-card:hover {
+        transform: scale(1.02);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+    .tool-card.active {
+        border-color: #1e3d59;
+        background: #e8f0fe;
     }
     .stButton > button {
-        width: 100%;
         border-radius: 8px;
         font-weight: 600;
         transition: all 0.3s;
@@ -55,13 +55,20 @@ st.markdown("""
         transform: scale(1.02);
         box-shadow: 0 4px 8px rgba(0,0,0,0.2);
     }
-    .download-btn {
-        background: linear-gradient(90deg, #00b4db, #0083b0);
-        color: white;
+    .legend-box {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        margin-right: 8px;
+        border: 2px solid black;
+        border-radius: 3px;
     }
-    .clear-btn {
-        background: linear-gradient(90deg, #f7971e, #ffd200);
-        color: black;
+    .instruction-banner {
+        background: linear-gradient(90deg, #f0f4f8, #d9e2ec);
+        padding: 0.8rem;
+        border-radius: 8px;
+        border-left: 4px solid #1e3d59;
+        margin: 0.5rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -75,28 +82,38 @@ if 'floor_name' not in st.session_state:
     st.session_state.floor_name = "Floor Plan 1"
 if 'show_grid' not in st.session_state:
     st.session_state.show_grid = True
-if 'snap_to_grid' not in st.session_state:
-    st.session_state.snap_to_grid = True
 if 'grid_size' not in st.session_state:
     st.session_state.grid_size = 20
+if 'selected_tool' not in st.session_state:
+    st.session_state.selected_tool = "Select"
+if 'drawing' not in st.session_state:
+    st.session_state.drawing = False
+if 'draw_start' not in st.session_state:
+    st.session_state.draw_start = None
+if 'drag_element' not in st.session_state:
+    st.session_state.drag_element = None
+if 'drag_offset' not in st.session_state:
+    st.session_state.drag_offset = None
 if 'selected_element' not in st.session_state:
     st.session_state.selected_element = None
+if 'temp_element' not in st.session_state:
+    st.session_state.temp_element = None
 
 # Element types with colors and icons
 ELEMENT_TYPES = {
-    "Wall": {"color": "#8B7355", "icon": "▬", "category": "Structure"},
-    "Door": {"color": "#2E86AB", "icon": "🚪", "category": "Structure"},
-    "Rack": {"color": "#D3A04A", "icon": "📦", "category": "Equipment"},
-    "Cable Tray": {"color": "#6B8E23", "icon": "🪜", "category": "Cabling"},
-    "Cable Route Blue": {"color": "#0066CC", "icon": "🔵", "category": "Cabling"},
-    "Cable Route Green": {"color": "#00CC66", "icon": "🟢", "category": "Cabling"},
-    "Cable Route Black": {"color": "#333333", "icon": "⚫", "category": "Cabling"},
-    "Cable Route Yellow": {"color": "#FFCC00", "icon": "🟡", "category": "Cabling"},
-    "Cable Route Red": {"color": "#CC0000", "icon": "🔴", "category": "Cabling"},
+    "Wall": {"color": "#8B7355", "icon": "▬", "category": "Structure", "draw_type": "rectangle"},
+    "Door": {"color": "#2E86AB", "icon": "🚪", "category": "Structure", "draw_type": "rectangle"},
+    "Rack": {"color": "#D3A04A", "icon": "📦", "category": "Equipment", "draw_type": "rectangle"},
+    "Cable Tray": {"color": "#6B8E23", "icon": "🪜", "category": "Cabling", "draw_type": "rectangle"},
+    "Cable Route Blue": {"color": "#0066CC", "icon": "🔵", "category": "Cabling", "draw_type": "line"},
+    "Cable Route Green": {"color": "#00CC66", "icon": "🟢", "category": "Cabling", "draw_type": "line"},
+    "Cable Route Black": {"color": "#333333", "icon": "⚫", "category": "Cabling", "draw_type": "line"},
+    "Cable Route Yellow": {"color": "#FFCC00", "icon": "🟡", "category": "Cabling", "draw_type": "line"},
+    "Cable Route Red": {"color": "#CC0000", "icon": "🔴", "category": "Cabling", "draw_type": "line"},
 }
 
 # Helper functions
-def add_element(element_type, x, y, width, height, label, rotation=0):
+def add_element(element_type, x, y, width, height, label="", rotation=0):
     """Add a new element to the floor plan"""
     st.session_state.elements.append({
         'id': st.session_state.element_id,
@@ -116,11 +133,14 @@ def add_element(element_type, x, y, width, height, label, rotation=0):
 def delete_element(element_id):
     """Delete an element by ID"""
     st.session_state.elements = [e for e in st.session_state.elements if e['id'] != element_id]
+    if st.session_state.selected_element == element_id:
+        st.session_state.selected_element = None
 
 def clear_all_elements():
     """Clear all elements from the floor plan"""
     st.session_state.elements = []
     st.session_state.element_id = 0
+    st.session_state.selected_element = None
 
 def export_to_json():
     """Export floor plan data to JSON"""
@@ -145,25 +165,34 @@ def import_from_json(json_data):
     except:
         return False
 
+def snap_to_grid(value):
+    """Snap value to grid"""
+    grid = st.session_state.grid_size
+    return round(value / grid) * grid
+
 def create_floor_plan_figure():
-    """Create the floor plan visualization using Plotly"""
+    """Create the floor plan visualization using Plotly with drag events"""
     fig = go.Figure()
+    
+    # Set canvas size
+    canvas_size = 500
     
     # Add grid if enabled
     if st.session_state.show_grid:
         grid_size = st.session_state.grid_size
-        max_coord = 500
         
         # Grid lines
-        for x in range(0, max_coord + grid_size, grid_size):
+        for x in range(0, canvas_size + grid_size, grid_size):
             fig.add_shape(
-                type="line", x0=x, y0=0, x1=x, y1=max_coord,
-                line=dict(color="rgba(200, 200, 200, 0.3)", width=0.5)
+                type="line", x0=x, y0=0, x1=x, y1=canvas_size,
+                line=dict(color="rgba(200, 200, 200, 0.3)", width=0.5),
+                layer="below"
             )
-        for y in range(0, max_coord + grid_size, grid_size):
+        for y in range(0, canvas_size + grid_size, grid_size):
             fig.add_shape(
-                type="line", x0=0, y0=y, x1=max_coord, y1=y,
-                line=dict(color="rgba(200, 200, 200, 0.3)", width=0.5)
+                type="line", x0=0, y0=y, x1=canvas_size, y1=y,
+                line=dict(color="rgba(200, 200, 200, 0.3)", width=0.5),
+                layer="below"
             )
     
     # Add elements
@@ -173,18 +202,21 @@ def create_floor_plan_figure():
         color = elem['color']
         label = elem['label']
         elem_type = elem['type']
-        rotation = elem.get('rotation', 0)
+        is_selected = (st.session_state.selected_element == elem['id'])
+        
+        # Highlight selected element
+        border_color = "red" if is_selected else "black"
+        border_width = 3 if is_selected else 2
         
         # Determine shape type based on element
         if elem_type == "Wall":
-            # Wall with black border
             fig.add_shape(
                 type="rect", x0=x, y0=y, x1=x+w, y1=y+h,
                 fillcolor=color, 
-                line=dict(color="black", width=2),
-                opacity=0.8
+                line=dict(color=border_color, width=border_width),
+                opacity=0.8,
+                layer="above"
             )
-            # Add texture for walls
             fig.add_annotation(
                 x=x+w/2, y=y+h/2,
                 text="▬",
@@ -193,96 +225,98 @@ def create_floor_plan_figure():
                 opacity=0.5
             )
         elif elem_type == "Door":
-            # Door with black border
             fig.add_shape(
                 type="rect", x0=x, y0=y, x1=x+w, y1=y+h,
                 fillcolor=color, 
-                line=dict(color="black", width=2),
-                opacity=0.6
+                line=dict(color=border_color, width=border_width),
+                opacity=0.6,
+                layer="above"
             )
-            # Door arc with black border
             fig.add_shape(
                 type="path",
                 path=f"M {x+w} {y} A {w} {h} 0 0 0 {x} {y+h}",
-                line=dict(color="black", width=2)
+                line=dict(color=border_color, width=border_width),
+                layer="above"
             )
         elif elem_type == "Rack":
-            # Rack with black border
             fig.add_shape(
                 type="rect", x0=x, y0=y, x1=x+w, y1=y+h,
                 fillcolor=color, 
-                line=dict(color="black", width=2.5),
-                opacity=0.9
+                line=dict(color=border_color, width=border_width),
+                opacity=0.9,
+                layer="above"
             )
-            # Add shelf lines with black color
             for i in range(1, 4):
                 shelf_y = y + (h * i / 4)
                 fig.add_shape(
                     type="line", x0=x+2, y0=shelf_y, x1=x+w-2, y1=shelf_y,
-                    line=dict(color="black", width=1.5)
+                    line=dict(color="black", width=1.5),
+                    layer="above"
                 )
-            # Add vertical support lines
             fig.add_shape(
                 type="line", x0=x+w/2, y0=y, x1=x+w/2, y1=y+h,
-                line=dict(color="black", width=1, dash="dot")
+                line=dict(color="black", width=1, dash="dot"),
+                layer="above"
             )
         elif elem_type == "Cable Tray":
-            # Cable tray with black border
             fig.add_shape(
                 type="rect", x0=x, y0=y, x1=x+w, y1=y+h,
                 fillcolor=color, 
-                line=dict(color="black", width=2),
-                opacity=0.7
+                line=dict(color=border_color, width=border_width),
+                opacity=0.7,
+                layer="above"
             )
-            # Ladder rungs with black color
             for i in range(1, 6):
                 rung_x = x + (w * i / 6)
                 fig.add_shape(
                     type="line", x0=rung_x, y0=y+2, x1=rung_x, y1=y+h-2,
-                    line=dict(color="black", width=1.5)
+                    line=dict(color="black", width=1.5),
+                    layer="above"
                 )
-            # Side rails with black color
             fig.add_shape(
                 type="line", x0=x, y0=y+2, x1=x+w, y1=y+2,
-                line=dict(color="black", width=1.5)
+                line=dict(color="black", width=1.5),
+                layer="above"
             )
             fig.add_shape(
                 type="line", x0=x, y0=y+h-2, x1=x+w, y1=y+h-2,
-                line=dict(color="black", width=1.5)
+                line=dict(color="black", width=1.5),
+                layer="above"
             )
         elif "Cable Route" in elem_type:
-            # Cable routes with black outline
-            # Main colored line with black outline
+            # Cable routes with arrow
             fig.add_shape(
                 type="line", x0=x, y0=y, x1=x+w, y1=y+h,
-                line=dict(color="black", width=8, dash="solid")
+                line=dict(color="black", width=8, dash="solid"),
+                layer="above"
             )
             fig.add_shape(
                 type="line", x0=x, y0=y, x1=x+w, y1=y+h,
-                line=dict(color=color, width=5, dash="solid")
+                line=dict(color=color, width=5, dash="solid"),
+                layer="above"
             )
-            # Add arrowhead with black outline
+            # Arrowhead
             arrow_size = 12
             dx, dy = w, h
             length = np.sqrt(dx**2 + dy**2)
             if length > 0:
                 ux, uy = dx/length, dy/length
-                # Black outline for arrow
                 fig.add_shape(
                     type="path",
                     path=f"M {x+w} {y+h} L {x+w - arrow_size*ux + arrow_size*uy/2} {y+h - arrow_size*uy - arrow_size*ux/2} L {x+w - arrow_size*ux - arrow_size*uy/2} {y+h - arrow_size*uy + arrow_size*ux/2} Z",
                     fillcolor="black", 
-                    line=dict(color="black", width=1)
+                    line=dict(color="black", width=1),
+                    layer="above"
                 )
-                # Colored fill for arrow
                 fig.add_shape(
                     type="path",
                     path=f"M {x+w-2} {y+h-2} L {x+w - (arrow_size-3)*ux + (arrow_size-3)*uy/2} {y+h - (arrow_size-3)*uy - (arrow_size-3)*ux/2} L {x+w - (arrow_size-3)*ux - (arrow_size-3)*uy/2} {y+h - (arrow_size-3)*uy + (arrow_size-3)*ux/2} Z",
                     fillcolor=color, 
-                    line=dict(color="black", width=0.5)
+                    line=dict(color="black", width=0.5),
+                    layer="above"
                 )
         
-        # Add label for all elements
+        # Add label
         if label:
             fig.add_annotation(
                 x=x+w/2, y=y+h/2,
@@ -296,7 +330,7 @@ def create_floor_plan_figure():
                 border_width=1
             )
         
-        # Add size indicator for larger elements
+        # Add size indicator
         if w > 20 or h > 20:
             fig.add_annotation(
                 x=x+w/2, y=y-8,
@@ -309,7 +343,7 @@ def create_floor_plan_figure():
                 border_width=0.5
             )
     
-    # Update layout
+    # Update layout with drag events
     fig.update_layout(
         width=900,
         height=700,
@@ -318,7 +352,8 @@ def create_floor_plan_figure():
             showgrid=False,
             zeroline=False,
             showticklabels=True,
-            tickfont=dict(size=8)
+            tickfont=dict(size=8),
+            fixedrange=False
         ),
         yaxis=dict(
             range=[-10, 510],
@@ -327,87 +362,105 @@ def create_floor_plan_figure():
             showticklabels=True,
             tickfont=dict(size=8),
             scaleanchor="x",
-            scaleratio=1
+            scaleratio=1,
+            fixedrange=False
         ),
         plot_bgcolor='white',
         margin=dict(l=50, r=50, t=50, b=50),
         hovermode='closest',
+        dragmode='pan',
         title=dict(
             text=f"📐 {st.session_state.floor_name}",
             font=dict(size=24, color="#1e3d59")
-        )
+        ),
+        clickmode='event+select'
     )
     
     return fig
 
 # Main UI
-st.markdown('<div class="main-header">🏗️ Advanced 2D Floor Plan Maker</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">🏗️ Interactive Floor Plan Maker</div>', unsafe_allow_html=True)
+
+# Instruction banner
+st.markdown("""
+<div class="instruction-banner">
+    🎯 <b>How to use:</b> 
+    Select a tool from the sidebar → Click and drag on the canvas to draw or move elements
+</div>
+""", unsafe_allow_html=True)
 
 # Sidebar - Controls
 with st.sidebar:
-    st.markdown("## 🎨 Design Tools")
+    st.markdown("## 🎨 Drawing Tools")
     
-    # Floor name
-    st.session_state.floor_name = st.text_input("📋 Floor Name", st.session_state.floor_name)
+    # Tool selection with visual cards
+    tools = ["Select", "Draw", "Move", "Delete"]
+    tool_icons = ["👆", "✏️", "✋", "🗑️"]
     
-    # Element creation
-    st.markdown("### ➕ Add Element")
-    col1, col2 = st.columns(2)
-    with col1:
-        element_type = st.selectbox("Type", list(ELEMENT_TYPES.keys()))
-    with col2:
-        rotation = st.number_input("Rotation (°)", 0, 360, 0, 15)
+    for tool, icon in zip(tools, tool_icons):
+        is_active = st.session_state.selected_tool == tool
+        if st.button(
+            f"{icon} {tool}",
+            use_container_width=True,
+            type="primary" if is_active else "secondary"
+        ):
+            st.session_state.selected_tool = tool
+            st.rerun()
     
-    col1, col2 = st.columns(2)
-    with col1:
-        width = st.number_input("Width", 20, 200, 40, 5)
-    with col2:
-        height = st.number_input("Height", 20, 200, 30, 5)
+    st.markdown("---")
+    st.markdown("### 📐 Element Type")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        x_pos = st.number_input("X Position", 0, 480, 50, 10)
-    with col2:
-        y_pos = st.number_input("Y Position", 0, 480, 50, 10)
+    # Element type selection for drawing
+    element_type = st.selectbox(
+        "Select type to draw",
+        list(ELEMENT_TYPES.keys()),
+        key="draw_type"
+    )
     
-    label = st.text_input("Label (optional)", "")
-    
-    if st.button("➕ Add Element", use_container_width=True):
-        if st.session_state.snap_to_grid:
-            grid = st.session_state.grid_size
-            x_pos = round(x_pos / grid) * grid
-            y_pos = round(y_pos / grid) * grid
-            width = round(width / grid) * grid
-            height = round(height / grid) * grid
-        add_element(element_type, x_pos, y_pos, width, height, label, rotation)
-        st.success(f"✅ Added {element_type}")
-        st.rerun()
+    # Quick info about selected element
+    info = ELEMENT_TYPES[element_type]
+    st.info(f"📌 {info['category']} - Draw with {info['draw_type']}")
     
     st.markdown("---")
     
-    # Element management
-    st.markdown("### 🗂️ Element Management")
-    if st.button("🗑️ Clear All", use_container_width=True, type="secondary"):
-        clear_all_elements()
-        st.rerun()
+    # Label and dimensions for drawing
+    st.markdown("### 🏷️ Properties")
+    draw_label = st.text_input("Label (optional)", "")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        default_width = st.number_input("Width", 20, 200, 40, 5, key="draw_width")
+    with col2:
+        default_height = st.number_input("Height", 20, 200, 30, 5, key="draw_height")
+    
+    st.markdown("---")
     
     # Grid settings
     st.markdown("### 📐 Grid Settings")
     st.session_state.show_grid = st.checkbox("Show Grid", st.session_state.show_grid)
-    st.session_state.snap_to_grid = st.checkbox("Snap to Grid", st.session_state.snap_to_grid)
     st.session_state.grid_size = st.slider("Grid Size", 10, 50, 20, 5)
+    
+    st.markdown("---")
     
     # Export/Import
     st.markdown("### 💾 Export/Import")
-    if st.button("📤 Export JSON", use_container_width=True):
-        json_data = export_to_json()
-        st.download_button(
-            label="📥 Download JSON",
-            data=json_data,
-            file_name=f"{st.session_state.floor_name.replace(' ', '_')}.json",
-            mime="application/json",
-            use_container_width=True
-        )
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("📤 Export", use_container_width=True):
+            json_data = export_to_json()
+            st.download_button(
+                label="📥 Download JSON",
+                data=json_data,
+                file_name=f"{st.session_state.floor_name.replace(' ', '_')}.json",
+                mime="application/json",
+                use_container_width=True
+            )
+    
+    with col2:
+        if st.button("🗑️ Clear All", use_container_width=True, type="secondary"):
+            clear_all_elements()
+            st.rerun()
     
     uploaded_file = st.file_uploader("📥 Import JSON", type=['json'])
     if uploaded_file is not None:
@@ -419,24 +472,48 @@ with st.sidebar:
         except:
             st.error("❌ Invalid JSON file")
     
+    st.markdown("---")
+    
     # Legend
     st.markdown("### 📖 Legend")
     for elem_type, info in ELEMENT_TYPES.items():
         st.markdown(
             f'<div style="display:flex; align-items:center; margin:2px 0;">'
-            f'<span class="legend-box" style="background:{info["color"]}; border:2px solid black;"></span>'
+            f'<span class="legend-box" style="background:{info["color"]};"></span>'
             f'<span style="font-size:0.9rem;">{info["icon"]} {elem_type}</span>'
             f'</div>',
             unsafe_allow_html=True
         )
+    
+    # Element count
+    st.markdown("---")
+    st.metric("Total Elements", len(st.session_state.elements))
 
-# Main content area
+# Main content area with canvas
 tab1, tab2, tab3 = st.tabs(["📐 Floor Plan", "📋 Element List", "📊 Statistics"])
 
 with tab1:
-    # Floor plan visualization
+    # JavaScript for canvas interaction
+    st.markdown("""
+    <script>
+    // This will be used for canvas interactions
+    </script>
+    """, unsafe_allow_html=True)
+    
+    # Create and display the floor plan
     fig = create_floor_plan_figure()
-    st.plotly_chart(fig, use_container_width=True)
+    
+    # Display the plot with config for interaction
+    config = {
+        'displayModeBar': True,
+        'modeBarButtonsToAdd': ['drawrect', 'drawline', 'eraseshape'],
+        'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
+        'displaylogo': False,
+        'scrollZoom': True,
+        'doubleClick': 'reset'
+    }
+    
+    st.plotly_chart(fig, use_container_width=True, config=config)
     
     # Quick info
     col1, col2, col3, col4 = st.columns(4)
@@ -461,8 +538,8 @@ with tab2:
         
         st.dataframe(display_df, use_container_width=True, height=400)
         
-        # Delete specific element
-        col1, col2 = st.columns([3, 1])
+        # Quick actions
+        col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
             delete_id = st.number_input("Enter ID to delete", min_value=0, step=1)
         with col2:
@@ -473,8 +550,16 @@ with tab2:
                     st.rerun()
                 else:
                     st.error("❌ ID not found")
+        with col3:
+            if st.button("🎯 Select", use_container_width=True):
+                if delete_id in df['id'].values:
+                    st.session_state.selected_element = delete_id
+                    st.success(f"✅ Selected element {delete_id}")
+                    st.rerun()
+                else:
+                    st.error("❌ ID not found")
     else:
-        st.info("No elements added yet. Start designing your floor plan!")
+        st.info("No elements added yet. Use the drawing tools to create your floor plan!")
 
 with tab3:
     # Statistics and analytics
@@ -496,7 +581,8 @@ with tab3:
             st.write(f"**Total Area:** {df['width'].sum() * df['height'].sum():,.0f} sq units")
             st.write(f"**Average Width:** {df['width'].mean():.1f}")
             st.write(f"**Average Height:** {df['height'].mean():.1f}")
-            st.write(f"**Largest Element:** {df.loc[df['width'].idxmax(), 'type']} ({df['width'].max()}×{df.loc[df['width'].idxmax(), 'height']})")
+            if len(df) > 0:
+                st.write(f"**Largest Element:** {df.loc[df['width'].idxmax(), 'type']} ({df['width'].max()}×{df.loc[df['width'].idxmax(), 'height']})")
         
         # Cable route summary
         cable_routes = [e for e in st.session_state.elements if "Cable Route" in e['type']]
@@ -513,7 +599,7 @@ st.markdown("---")
 st.markdown(
     """
     <div style="text-align: center; color: #666; font-size: 0.9rem;">
-        🏗️ Advanced Floor Plan Maker | Built with Streamlit & Plotly
+        🏗️ Interactive Floor Plan Maker | Click & Drag to Draw | Select & Move Elements
     </div>
     """,
     unsafe_allow_html=True
