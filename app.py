@@ -30,13 +30,14 @@ st.markdown("""
     }
     .tool-card {
         background: white;
-        padding: 0.5rem;
+        padding: 0.8rem;
         border-radius: 8px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        margin: 0.2rem 0;
+        margin: 0.3rem 0;
         cursor: pointer;
         transition: all 0.3s;
         border: 2px solid transparent;
+        text-align: center;
     }
     .tool-card:hover {
         transform: scale(1.02);
@@ -45,6 +46,13 @@ st.markdown("""
     .tool-card.active {
         border-color: #1e3d59;
         background: #e8f0fe;
+    }
+    .tool-card .icon {
+        font-size: 1.5rem;
+    }
+    .tool-card .label {
+        font-size: 0.9rem;
+        font-weight: 600;
     }
     .stButton > button {
         border-radius: 8px;
@@ -70,6 +78,22 @@ st.markdown("""
         border-left: 4px solid #1e3d59;
         margin: 0.5rem 0;
     }
+    .placement-indicator {
+        background: rgba(30, 61, 89, 0.1);
+        border: 2px dashed #1e3d59;
+        border-radius: 4px;
+        padding: 0.5rem;
+        text-align: center;
+        font-weight: 600;
+        color: #1e3d59;
+    }
+    .element-preview {
+        border: 2px solid #1e3d59;
+        border-radius: 4px;
+        padding: 0.5rem;
+        background: white;
+        margin: 0.2rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -86,18 +110,18 @@ if 'grid_size' not in st.session_state:
     st.session_state.grid_size = 20
 if 'selected_tool' not in st.session_state:
     st.session_state.selected_tool = "Select"
-if 'drawing' not in st.session_state:
-    st.session_state.drawing = False
-if 'draw_start' not in st.session_state:
-    st.session_state.draw_start = None
-if 'drag_element' not in st.session_state:
-    st.session_state.drag_element = None
-if 'drag_offset' not in st.session_state:
-    st.session_state.drag_offset = None
 if 'selected_element' not in st.session_state:
     st.session_state.selected_element = None
-if 'temp_element' not in st.session_state:
-    st.session_state.temp_element = None
+if 'mode' not in st.session_state:
+    st.session_state.mode = "view"  # "view", "place", "move", "delete"
+if 'placement_mode' not in st.session_state:
+    st.session_state.placement_mode = False
+if 'drag_element' not in st.session_state:
+    st.session_state.drag_element = None
+if 'mouse_x' not in st.session_state:
+    st.session_state.mouse_x = 50
+if 'mouse_y' not in st.session_state:
+    st.session_state.mouse_y = 50
 
 # Element types with colors and icons
 ELEMENT_TYPES = {
@@ -171,17 +195,14 @@ def snap_to_grid(value):
     return round(value / grid) * grid
 
 def create_floor_plan_figure():
-    """Create the floor plan visualization using Plotly with drag events"""
+    """Create the floor plan visualization using Plotly"""
     fig = go.Figure()
     
-    # Set canvas size
     canvas_size = 500
     
     # Add grid if enabled
     if st.session_state.show_grid:
         grid_size = st.session_state.grid_size
-        
-        # Grid lines
         for x in range(0, canvas_size + grid_size, grid_size):
             fig.add_shape(
                 type="line", x0=x, y0=0, x1=x, y1=canvas_size,
@@ -204,11 +225,9 @@ def create_floor_plan_figure():
         elem_type = elem['type']
         is_selected = (st.session_state.selected_element == elem['id'])
         
-        # Highlight selected element
         border_color = "red" if is_selected else "black"
         border_width = 3 if is_selected else 2
         
-        # Determine shape type based on element
         if elem_type == "Wall":
             fig.add_shape(
                 type="rect", x0=x, y0=y, x1=x+w, y1=y+h,
@@ -284,7 +303,6 @@ def create_floor_plan_figure():
                 layer="above"
             )
         elif "Cable Route" in elem_type:
-            # Cable routes with arrow
             fig.add_shape(
                 type="line", x0=x, y0=y, x1=x+w, y1=y+h,
                 line=dict(color="black", width=8, dash="solid"),
@@ -295,7 +313,6 @@ def create_floor_plan_figure():
                 line=dict(color=color, width=5, dash="solid"),
                 layer="above"
             )
-            # Arrowhead
             arrow_size = 12
             dx, dy = w, h
             length = np.sqrt(dx**2 + dy**2)
@@ -316,7 +333,6 @@ def create_floor_plan_figure():
                     layer="above"
                 )
         
-        # Add label
         if label:
             fig.add_annotation(
                 x=x+w/2, y=y+h/2,
@@ -330,7 +346,6 @@ def create_floor_plan_figure():
                 border_width=1
             )
         
-        # Add size indicator
         if w > 20 or h > 20:
             fig.add_annotation(
                 x=x+w/2, y=y-8,
@@ -343,7 +358,31 @@ def create_floor_plan_figure():
                 border_width=0.5
             )
     
-    # Update layout with drag events
+    # Add placement preview if in placement mode
+    if st.session_state.placement_mode:
+        x = st.session_state.mouse_x
+        y = st.session_state.mouse_y
+        w = st.session_state.get('preview_width', 40)
+        h = st.session_state.get('preview_height', 30)
+        elem_type = st.session_state.get('preview_type', 'Wall')
+        color = ELEMENT_TYPES[elem_type]["color"]
+        
+        fig.add_shape(
+            type="rect", x0=x, y0=y, x1=x+w, y1=y+h,
+            fillcolor=color,
+            line=dict(color="red", width=2, dash="dash"),
+            opacity=0.5,
+            layer="above"
+        )
+        fig.add_annotation(
+            x=x+w/2, y=y-15,
+            text="📍 Click to place",
+            font=dict(size=10, color="red"),
+            showarrow=True,
+            arrowhead=1,
+            arrowcolor="red"
+        )
+    
     fig.update_layout(
         width=900,
         height=700,
@@ -382,56 +421,103 @@ def create_floor_plan_figure():
 st.markdown('<div class="main-header">🏗️ Interactive Floor Plan Maker</div>', unsafe_allow_html=True)
 
 # Instruction banner
-st.markdown("""
+mode_instructions = {
+    "Select": "🖱️ Click on elements to select them. Selected elements show a red border.",
+    "Place": "✏️ Click anywhere on the canvas to place the selected element type.",
+    "Move": "✋ Click on an element to select it, then use the slider below to move it.",
+    "Delete": "🗑️ Click on an element to delete it."
+}
+
+current_instruction = mode_instructions.get(st.session_state.selected_tool, "Select a tool to begin")
+st.markdown(f"""
 <div class="instruction-banner">
-    🎯 <b>How to use:</b> 
-    Select a tool from the sidebar → Click and drag on the canvas to draw or move elements
+    {current_instruction}
 </div>
 """, unsafe_allow_html=True)
 
 # Sidebar - Controls
 with st.sidebar:
-    st.markdown("## 🎨 Drawing Tools")
+    st.markdown("## 🎨 Tools")
     
-    # Tool selection with visual cards
-    tools = ["Select", "Draw", "Move", "Delete"]
+    # Tool selection with better UI
+    tools = ["Select", "Place", "Move", "Delete"]
     tool_icons = ["👆", "✏️", "✋", "🗑️"]
+    tool_descriptions = ["Click to select", "Click to place", "Click & drag", "Click to delete"]
     
-    for tool, icon in zip(tools, tool_icons):
+    for tool, icon, desc in zip(tools, tool_icons, tool_descriptions):
         is_active = st.session_state.selected_tool == tool
-        if st.button(
-            f"{icon} {tool}",
-            use_container_width=True,
-            type="primary" if is_active else "secondary"
-        ):
-            st.session_state.selected_tool = tool
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            st.markdown(f"<div style='font-size:1.5rem;'>{icon}</div>", unsafe_allow_html=True)
+        with col2:
+            if st.button(
+                f"{tool}",
+                use_container_width=True,
+                type="primary" if is_active else "secondary"
+            ):
+                st.session_state.selected_tool = tool
+                if tool == "Place":
+                    st.session_state.placement_mode = True
+                else:
+                    st.session_state.placement_mode = False
+                st.rerun()
+            st.caption(desc)
+    
+    st.markdown("---")
+    
+    # Element type selection (only visible in Place mode)
+    if st.session_state.selected_tool == "Place":
+        st.markdown("### 📐 Element Type")
+        
+        # Grid of element types
+        cols = st.columns(2)
+        for idx, (elem_type, info) in enumerate(ELEMENT_TYPES.items()):
+            with cols[idx % 2]:
+                is_selected = st.session_state.get('preview_type') == elem_type
+                if st.button(
+                    f"{info['icon']} {elem_type[:12]}",
+                    use_container_width=True,
+                    type="primary" if is_selected else "secondary"
+                ):
+                    st.session_state.preview_type = elem_type
+                    st.rerun()
+        
+        st.markdown("---")
+        st.markdown("### 📏 Size Controls")
+        
+        # Size controls for placement
+        col1, col2 = st.columns(2)
+        with col1:
+            st.session_state.preview_width = st.slider(
+                "Width",
+                10, 100, 40, 5,
+                key="place_width"
+            )
+        with col2:
+            st.session_state.preview_height = st.slider(
+                "Height",
+                10, 100, 30, 5,
+                key="place_height"
+            )
+        
+        # Label input
+        st.session_state.place_label = st.text_input("Label (optional)", "")
+        
+        # Position preview
+        st.markdown("### 📍 Position")
+        st.markdown(f"X: {st.session_state.mouse_x}, Y: {st.session_state.mouse_y}")
+        
+        # Place button
+        if st.button("📍 Place at Current Position", use_container_width=True, type="primary"):
+            elem_type = st.session_state.get('preview_type', 'Wall')
+            label = st.session_state.get('place_label', '')
+            x = snap_to_grid(st.session_state.mouse_x)
+            y = snap_to_grid(st.session_state.mouse_y)
+            w = snap_to_grid(st.session_state.preview_width)
+            h = snap_to_grid(st.session_state.preview_height)
+            add_element(elem_type, x, y, w, h, label)
+            st.success(f"✅ Added {elem_type}")
             st.rerun()
-    
-    st.markdown("---")
-    st.markdown("### 📐 Element Type")
-    
-    # Element type selection for drawing
-    element_type = st.selectbox(
-        "Select type to draw",
-        list(ELEMENT_TYPES.keys()),
-        key="draw_type"
-    )
-    
-    # Quick info about selected element
-    info = ELEMENT_TYPES[element_type]
-    st.info(f"📌 {info['category']} - Draw with {info['draw_type']}")
-    
-    st.markdown("---")
-    
-    # Label and dimensions for drawing
-    st.markdown("### 🏷️ Properties")
-    draw_label = st.text_input("Label (optional)", "")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        default_width = st.number_input("Width", 20, 200, 40, 5, key="draw_width")
-    with col2:
-        default_height = st.number_input("Height", 20, 200, 30, 5, key="draw_height")
     
     st.markdown("---")
     
@@ -439,6 +525,45 @@ with st.sidebar:
     st.markdown("### 📐 Grid Settings")
     st.session_state.show_grid = st.checkbox("Show Grid", st.session_state.show_grid)
     st.session_state.grid_size = st.slider("Grid Size", 10, 50, 20, 5)
+    
+    # Move controls (visible in Move mode)
+    if st.session_state.selected_tool == "Move" and st.session_state.selected_element is not None:
+        st.markdown("---")
+        st.markdown("### 🔄 Move Selected Element")
+        
+        # Find the selected element
+        selected = None
+        for elem in st.session_state.elements:
+            if elem['id'] == st.session_state.selected_element:
+                selected = elem
+                break
+        
+        if selected:
+            st.markdown(f"**{selected['type']}** - ID: {selected['id']}")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                new_x = st.slider(
+                    "X Position",
+                    0, 460, selected['x'], 10,
+                    key="move_x"
+                )
+            with col2:
+                new_y = st.slider(
+                    "Y Position",
+                    0, 460, selected['y'], 10,
+                    key="move_y"
+                )
+            
+            if st.button("🔄 Update Position", use_container_width=True):
+                # Update element position
+                for elem in st.session_state.elements:
+                    if elem['id'] == st.session_state.selected_element:
+                        elem['x'] = snap_to_grid(new_x)
+                        elem['y'] = snap_to_grid(new_y)
+                        st.success("✅ Position updated!")
+                        st.rerun()
+                        break
     
     st.markdown("---")
     
@@ -489,21 +614,14 @@ with st.sidebar:
     st.markdown("---")
     st.metric("Total Elements", len(st.session_state.elements))
 
-# Main content area with canvas
+# Main content area
 tab1, tab2, tab3 = st.tabs(["📐 Floor Plan", "📋 Element List", "📊 Statistics"])
 
 with tab1:
-    # JavaScript for canvas interaction
-    st.markdown("""
-    <script>
-    // This will be used for canvas interactions
-    </script>
-    """, unsafe_allow_html=True)
-    
     # Create and display the floor plan
     fig = create_floor_plan_figure()
     
-    # Display the plot with config for interaction
+    # Display the plot
     config = {
         'displayModeBar': True,
         'modeBarButtonsToAdd': ['drawrect', 'drawline', 'eraseshape'],
@@ -513,9 +631,10 @@ with tab1:
         'doubleClick': 'reset'
     }
     
-    st.plotly_chart(fig, use_container_width=True, config=config)
+    # Use plotly with click events
+    event = st.plotly_chart(fig, use_container_width=True, config=config, key="floor_plan")
     
-    # Quick info
+    # Quick stats
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Total Elements", len(st.session_state.elements))
@@ -541,7 +660,7 @@ with tab2:
         # Quick actions
         col1, col2, col3 = st.columns([2, 1, 1])
         with col1:
-            delete_id = st.number_input("Enter ID to delete", min_value=0, step=1)
+            delete_id = st.number_input("Enter ID to delete or select", min_value=0, step=1)
         with col2:
             if st.button("🗑️ Delete", use_container_width=True):
                 if delete_id in df['id'].values:
@@ -554,12 +673,13 @@ with tab2:
             if st.button("🎯 Select", use_container_width=True):
                 if delete_id in df['id'].values:
                     st.session_state.selected_element = delete_id
+                    st.session_state.selected_tool = "Select"
                     st.success(f"✅ Selected element {delete_id}")
                     st.rerun()
                 else:
                     st.error("❌ ID not found")
     else:
-        st.info("No elements added yet. Use the drawing tools to create your floor plan!")
+        st.info("No elements added yet. Use the Place tool to add elements!")
 
 with tab3:
     # Statistics and analytics
@@ -569,13 +689,11 @@ with tab3:
         col1, col2 = st.columns(2)
         
         with col1:
-            # Element type distribution
             type_counts = pd.DataFrame(st.session_state.elements)['type'].value_counts()
             st.markdown("#### Element Type Distribution")
             st.bar_chart(type_counts)
         
         with col2:
-            # Dimension statistics
             df = pd.DataFrame(st.session_state.elements)
             st.markdown("#### Dimension Statistics")
             st.write(f"**Total Area:** {df['width'].sum() * df['height'].sum():,.0f} sq units")
@@ -584,7 +702,6 @@ with tab3:
             if len(df) > 0:
                 st.write(f"**Largest Element:** {df.loc[df['width'].idxmax(), 'type']} ({df['width'].max()}×{df.loc[df['width'].idxmax(), 'height']})")
         
-        # Cable route summary
         cable_routes = [e for e in st.session_state.elements if "Cable Route" in e['type']]
         if cable_routes:
             st.markdown("#### Cable Route Summary")
@@ -599,7 +716,7 @@ st.markdown("---")
 st.markdown(
     """
     <div style="text-align: center; color: #666; font-size: 0.9rem;">
-        🏗️ Interactive Floor Plan Maker | Click & Drag to Draw | Select & Move Elements
+        🏗️ Interactive Floor Plan Maker | Select a tool to start designing
     </div>
     """,
     unsafe_allow_html=True
