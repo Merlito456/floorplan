@@ -177,10 +177,11 @@ def create_floor_plan_figure():
         
         # Determine shape type based on element
         if elem_type == "Wall":
-            # Wall as a thick line
+            # Wall with black border
             fig.add_shape(
                 type="rect", x0=x, y0=y, x1=x+w, y1=y+h,
-                fillcolor=color, line=dict(color=color, width=2),
+                fillcolor=color, 
+                line=dict(color="black", width=2),
                 opacity=0.8
             )
             # Add texture for walls
@@ -192,62 +193,93 @@ def create_floor_plan_figure():
                 opacity=0.5
             )
         elif elem_type == "Door":
-            # Door as an arc
+            # Door with black border
             fig.add_shape(
                 type="rect", x0=x, y0=y, x1=x+w, y1=y+h,
-                fillcolor=color, line=dict(color=color, width=2),
+                fillcolor=color, 
+                line=dict(color="black", width=2),
                 opacity=0.6
             )
-            # Door arc
+            # Door arc with black border
             fig.add_shape(
                 type="path",
                 path=f"M {x+w} {y} A {w} {h} 0 0 0 {x} {y+h}",
-                line=dict(color=color, width=2)
+                line=dict(color="black", width=2)
             )
         elif elem_type == "Rack":
-            # Rack as a box with shelves
+            # Rack with black border
             fig.add_shape(
                 type="rect", x0=x, y0=y, x1=x+w, y1=y+h,
-                fillcolor=color, line=dict(color="#8B6914", width=2),
+                fillcolor=color, 
+                line=dict(color="black", width=2.5),
                 opacity=0.9
             )
-            # Add shelf lines
+            # Add shelf lines with black color
             for i in range(1, 4):
                 shelf_y = y + (h * i / 4)
                 fig.add_shape(
                     type="line", x0=x+2, y0=shelf_y, x1=x+w-2, y1=shelf_y,
-                    line=dict(color="#8B6914", width=1)
+                    line=dict(color="black", width=1.5)
                 )
+            # Add vertical support lines
+            fig.add_shape(
+                type="line", x0=x+w/2, y0=y, x1=x+w/2, y1=y+h,
+                line=dict(color="black", width=1, dash="dot")
+            )
         elif elem_type == "Cable Tray":
-            # Cable tray as a ladder pattern
+            # Cable tray with black border
             fig.add_shape(
                 type="rect", x0=x, y0=y, x1=x+w, y1=y+h,
-                fillcolor=color, line=dict(color=color, width=2),
+                fillcolor=color, 
+                line=dict(color="black", width=2),
                 opacity=0.7
             )
-            # Ladder rungs
+            # Ladder rungs with black color
             for i in range(1, 6):
                 rung_x = x + (w * i / 6)
                 fig.add_shape(
                     type="line", x0=rung_x, y0=y+2, x1=rung_x, y1=y+h-2,
-                    line=dict(color="white", width=1)
+                    line=dict(color="black", width=1.5)
                 )
+            # Side rails with black color
+            fig.add_shape(
+                type="line", x0=x, y0=y+2, x1=x+w, y1=y+2,
+                line=dict(color="black", width=1.5)
+            )
+            fig.add_shape(
+                type="line", x0=x, y0=y+h-2, x1=x+w, y1=y+h-2,
+                line=dict(color="black", width=1.5)
+            )
         elif "Cable Route" in elem_type:
-            # Cable routes as colored lines with arrows
+            # Cable routes with black outline
+            # Main colored line with black outline
             fig.add_shape(
                 type="line", x0=x, y0=y, x1=x+w, y1=y+h,
-                line=dict(color=color, width=6, dash="solid")
+                line=dict(color="black", width=8, dash="solid")
             )
-            # Add arrowhead
-            arrow_size = 10
+            fig.add_shape(
+                type="line", x0=x, y0=y, x1=x+w, y1=y+h,
+                line=dict(color=color, width=5, dash="solid")
+            )
+            # Add arrowhead with black outline
+            arrow_size = 12
             dx, dy = w, h
             length = np.sqrt(dx**2 + dy**2)
             if length > 0:
                 ux, uy = dx/length, dy/length
+                # Black outline for arrow
                 fig.add_shape(
                     type="path",
                     path=f"M {x+w} {y+h} L {x+w - arrow_size*ux + arrow_size*uy/2} {y+h - arrow_size*uy - arrow_size*ux/2} L {x+w - arrow_size*ux - arrow_size*uy/2} {y+h - arrow_size*uy + arrow_size*ux/2} Z",
-                    fillcolor=color, line=dict(color=color, width=1)
+                    fillcolor="black", 
+                    line=dict(color="black", width=1)
+                )
+                # Colored fill for arrow
+                fig.add_shape(
+                    type="path",
+                    path=f"M {x+w-2} {y+h-2} L {x+w - (arrow_size-3)*ux + (arrow_size-3)*uy/2} {y+h - (arrow_size-3)*uy - (arrow_size-3)*ux/2} L {x+w - (arrow_size-3)*ux - (arrow_size-3)*uy/2} {y+h - (arrow_size-3)*uy + (arrow_size-3)*ux/2} Z",
+                    fillcolor=color, 
+                    line=dict(color="black", width=0.5)
                 )
         
         # Add label for all elements
@@ -257,18 +289,24 @@ def create_floor_plan_figure():
                 text=f"{label}",
                 font=dict(size=10, color="white", family="Arial Black"),
                 showarrow=False,
-                bgcolor="rgba(0,0,0,0.6)",
-                borderpad=2,
-                font_color="white"
+                bgcolor="rgba(0,0,0,0.7)",
+                borderpad=3,
+                font_color="white",
+                border_color="black",
+                border_width=1
             )
         
         # Add size indicator for larger elements
         if w > 20 or h > 20:
             fig.add_annotation(
-                x=x+w/2, y=y-5,
-                text=f"{w}x{h}",
-                font=dict(size=8, color="#666"),
-                showarrow=False
+                x=x+w/2, y=y-8,
+                text=f"{w}×{h}",
+                font=dict(size=9, color="#333", family="Arial"),
+                showarrow=False,
+                bgcolor="rgba(255,255,255,0.8)",
+                borderpad=2,
+                border_color="black",
+                border_width=0.5
             )
     
     # Update layout
@@ -386,7 +424,7 @@ with st.sidebar:
     for elem_type, info in ELEMENT_TYPES.items():
         st.markdown(
             f'<div style="display:flex; align-items:center; margin:2px 0;">'
-            f'<span class="legend-box" style="background:{info["color"]};"></span>'
+            f'<span class="legend-box" style="background:{info["color"]}; border:2px solid black;"></span>'
             f'<span style="font-size:0.9rem;">{info["icon"]} {elem_type}</span>'
             f'</div>',
             unsafe_allow_html=True
@@ -458,7 +496,7 @@ with tab3:
             st.write(f"**Total Area:** {df['width'].sum() * df['height'].sum():,.0f} sq units")
             st.write(f"**Average Width:** {df['width'].mean():.1f}")
             st.write(f"**Average Height:** {df['height'].mean():.1f}")
-            st.write(f"**Largest Element:** {df.loc[df['width'].idxmax(), 'type']} ({df['width'].max()}x{df.loc[df['width'].idxmax(), 'height']})")
+            st.write(f"**Largest Element:** {df.loc[df['width'].idxmax(), 'type']} ({df['width'].max()}×{df.loc[df['width'].idxmax(), 'height']})")
         
         # Cable route summary
         cable_routes = [e for e in st.session_state.elements if "Cable Route" in e['type']]
