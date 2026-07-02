@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import json
 from datetime import datetime
-import base64
 import os
 
 # Page configuration
@@ -58,6 +57,16 @@ st.markdown("""
         border-radius: 8px;
         border-left: 4px solid #1e3d59;
         margin: 0.5rem 0;
+    }
+    .element-count {
+        font-size: 2rem;
+        font-weight: bold;
+        color: #1e3d59;
+        text-align: center;
+        padding: 0.5rem;
+        background: #f0f4f8;
+        border-radius: 8px;
+        margin: 0.2rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -424,14 +433,6 @@ def create_canvas_html():
                 }}
             }}
             
-            function sendAction(action, data) {{
-                // Use Streamlit's query parameters for communication
-                const params = new URLSearchParams(window.location.search);
-                params.set('action', action);
-                params.set('data', JSON.stringify(data));
-                window.location.search = params.toString();
-            }}
-            
             // Mouse events
             canvas.addEventListener('mousedown', function(e) {{
                 const rect = canvas.getBoundingClientRect();
@@ -440,7 +441,7 @@ def create_canvas_html():
                 const x = (e.clientX - rect.left) * scaleX;
                 const y = (e.clientY - rect.top) * scaleY;
                 
-                coordEl.textContent = `📍 ${Math.round(x)}, ${Math.round(y)}`;
+                coordEl.textContent = `📍 ${{Math.round(x)}}, ${{Math.round(y)}}`;
                 
                 if (selectedTool === 'Draw') {{
                     isDrawing = true;
@@ -481,7 +482,10 @@ def create_canvas_html():
                         const elem = elements[i];
                         if (x >= elem.x && x <= elem.x + elem.width &&
                             y >= elem.y && y <= elem.y + elem.height) {{
-                            sendAction('delete', {{'id': elem.id}});
+                            const params = new URLSearchParams(window.location.search);
+                            params.set('action', 'delete');
+                            params.set('data', JSON.stringify({{'id': elem.id}}));
+                            window.location.search = params.toString();
                             return;
                         }}
                     }}
@@ -495,7 +499,7 @@ def create_canvas_html():
                 const x = (e.clientX - rect.left) * scaleX;
                 const y = (e.clientY - rect.top) * scaleY;
                 
-                coordEl.textContent = `📍 ${Math.round(x)}, ${Math.round(y)}`;
+                coordEl.textContent = `📍 ${{Math.round(x)}}, ${{Math.round(y)}}`;
                 
                 if (isDrawing) {{
                     currentX = x;
@@ -529,14 +533,17 @@ def create_canvas_html():
                     const h = snapToGrid(Math.abs(y - startY));
                     
                     if (w > 5 && h > 5) {{
-                        sendAction('add', {{
+                        const params = new URLSearchParams(window.location.search);
+                        params.set('action', 'add');
+                        params.set('data', JSON.stringify({{
                             'type': elementType,
                             'x': x1,
                             'y': y1,
                             'width': w,
                             'height': h,
                             'label': drawLabel
-                        }});
+                        }}));
+                        window.location.search = params.toString();
                     }}
                     
                     isDrawing = false;
@@ -557,22 +564,6 @@ def create_canvas_html():
                 if (isDragging) {{
                     isDragging = false;
                     dragElementId = null;
-                }}
-            }});
-            
-            // Listen for messages from Python
-            window.addEventListener('message', function(event) {{
-                if (event.data.type === 'update_tool') {{
-                    selectedTool = event.data.tool;
-                    statusEl.textContent = '🔧 Tool: ' + selectedTool;
-                }} else if (event.data.type === 'update_element_type') {{
-                    elementType = event.data.elementType;
-                }} else if (event.data.type === 'update_label') {{
-                    drawLabel = event.data.label;
-                }} else if (event.data.type === 'update_elements') {{
-                    elements = event.data.elements;
-                    selectedElementId = event.data.selectedElement;
-                    draw();
                 }}
             }});
             
@@ -617,11 +608,11 @@ if 'action' in query_params:
             delete_element(data['id'])
             st.success(f"✅ Deleted element {data['id']}")
         
-        # Clear query params to prevent re-processing
+        # Clear query params
         st.query_params.clear()
         st.rerun()
     except Exception as e:
-        st.error(f"Error processing action: {str(e)}")
+        st.error(f"Error: {str(e)}")
         st.query_params.clear()
 
 # Sidebar
@@ -630,8 +621,9 @@ with st.sidebar:
     
     tools = ["Draw", "Move", "Select", "Delete"]
     tool_icons = ["✏️", "✋", "👆", "🗑️"]
+    tool_descs = ["Click & drag to draw", "Drag to move", "Click to select", "Click to delete"]
     
-    for tool, icon in zip(tools, tool_icons):
+    for tool, icon, desc in zip(tools, tool_icons, tool_descs):
         is_active = st.session_state.selected_tool == tool
         if st.button(
             f"{icon} {tool}",
@@ -640,6 +632,7 @@ with st.sidebar:
         ):
             st.session_state.selected_tool = tool
             st.rerun()
+        st.caption(desc)
     
     st.markdown("---")
     
@@ -725,7 +718,9 @@ with st.sidebar:
             unsafe_allow_html=True
         )
     
-    st.metric("Total Elements", len(st.session_state.elements))
+    # Element count
+    st.markdown("---")
+    st.markdown(f'<div class="element-count">📊 {len(st.session_state.elements)} Elements</div>', unsafe_allow_html=True)
 
 # Main content
 tab1, tab2, tab3 = st.tabs(["📐 Floor Plan", "📋 Element List", "📊 Statistics"])
@@ -796,11 +791,13 @@ with tab3:
         with col2:
             df = pd.DataFrame(st.session_state.elements)
             st.markdown("#### Dimension Statistics")
-            st.write(f"**Total Area:** {df['width'].sum() * df['height'].sum():,.0f} sq units")
+            total_area = sum([e['width'] * e['height'] for e in st.session_state.elements])
+            st.write(f"**Total Area:** {total_area:,.0f} sq units")
             st.write(f"**Average Width:** {df['width'].mean():.1f}")
             st.write(f"**Average Height:** {df['height'].mean():.1f}")
             if len(df) > 0:
-                st.write(f"**Largest Element:** {df.loc[df['width'].idxmax(), 'type']} ({df['width'].max()}x{df.loc[df['width'].idxmax(), 'height']})")
+                largest = df.loc[df['width'].idxmax()]
+                st.write(f"**Largest Element:** {largest['type']} ({largest['width']}x{largest['height']})")
     else:
         st.info("Add elements to see statistics")
 
