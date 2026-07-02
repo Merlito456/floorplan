@@ -4,6 +4,7 @@ import numpy as np
 import json
 from datetime import datetime
 import base64
+import os
 
 # Page configuration
 st.set_page_config(
@@ -58,29 +59,6 @@ st.markdown("""
         border-left: 4px solid #1e3d59;
         margin: 0.5rem 0;
     }
-    .tool-btn {
-        padding: 10px;
-        margin: 5px 0;
-        border-radius: 8px;
-        border: 2px solid #ddd;
-        background: white;
-        cursor: pointer;
-        transition: all 0.3s;
-        text-align: center;
-        font-weight: 600;
-    }
-    .tool-btn.active {
-        border-color: #1e3d59;
-        background: #e8f0fe;
-    }
-    .element-card {
-        background: white;
-        padding: 0.5rem;
-        border-radius: 5px;
-        border-left: 4px solid #1e3d59;
-        margin: 0.2rem 0;
-        font-size: 0.9rem;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -99,14 +77,8 @@ if 'selected_tool' not in st.session_state:
     st.session_state.selected_tool = "Draw"
 if 'selected_element' not in st.session_state:
     st.session_state.selected_element = None
-if 'drawing_mode' not in st.session_state:
-    st.session_state.drawing_mode = False
-if 'canvas_width' not in st.session_state:
-    st.session_state.canvas_width = 900
-if 'canvas_height' not in st.session_state:
-    st.session_state.canvas_height = 600
 
-# Element types with colors
+# Element types
 ELEMENT_TYPES = {
     "Wall": {"color": "#8B7355", "category": "Structure"},
     "Door": {"color": "#2E86AB", "category": "Structure"},
@@ -119,9 +91,7 @@ ELEMENT_TYPES = {
     "Cable Route Red": {"color": "#CC0000", "category": "Cabling"},
 }
 
-# Helper functions
 def add_element(element_type, x, y, width, height, label=""):
-    """Add a new element to the floor plan"""
     st.session_state.elements.append({
         'id': st.session_state.element_id,
         'type': element_type,
@@ -134,22 +104,18 @@ def add_element(element_type, x, y, width, height, label=""):
         'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
     st.session_state.element_id += 1
-    st.session_state.drawing_mode = False
 
 def delete_element(element_id):
-    """Delete an element by ID"""
     st.session_state.elements = [e for e in st.session_state.elements if e['id'] != element_id]
     if st.session_state.selected_element == element_id:
         st.session_state.selected_element = None
 
 def clear_all_elements():
-    """Clear all elements from the floor plan"""
     st.session_state.elements = []
     st.session_state.element_id = 0
     st.session_state.selected_element = None
 
 def export_to_json():
-    """Export floor plan data to JSON"""
     data = {
         'floor_name': st.session_state.floor_name,
         'elements': st.session_state.elements,
@@ -159,7 +125,6 @@ def export_to_json():
     return json.dumps(data, indent=2)
 
 def import_from_json(json_data):
-    """Import floor plan data from JSON"""
     try:
         data = json.loads(json_data)
         st.session_state.floor_name = data.get('floor_name', 'Imported Plan')
@@ -171,14 +136,10 @@ def import_from_json(json_data):
     except:
         return False
 
-def get_elements_json():
-    """Get elements as JSON string for JavaScript"""
-    return json.dumps(st.session_state.elements)
-
 def create_canvas_html():
-    """Create HTML with JavaScript canvas and proper event handling"""
+    """Create HTML with JavaScript canvas"""
     
-    elements_json = get_elements_json()
+    elements_json = json.dumps(st.session_state.elements)
     selected_tool = st.session_state.selected_tool
     selected_element = st.session_state.selected_element
     show_grid = st.session_state.show_grid
@@ -189,8 +150,9 @@ def create_canvas_html():
     <html>
     <head>
         <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
-            body {{ margin: 0; padding: 0; background: white; }}
+            body {{ margin: 0; padding: 0; background: white; overflow: hidden; }}
             #canvas {{
                 display: block;
                 width: 100%;
@@ -199,16 +161,30 @@ def create_canvas_html():
                 border: 2px solid #ddd;
                 border-radius: 8px;
                 background: white;
+                touch-action: none;
             }}
-            #info {{
+            #status {{
                 position: absolute;
                 bottom: 10px;
                 left: 10px;
                 background: rgba(0,0,0,0.7);
                 color: white;
-                padding: 4px 8px;
+                padding: 4px 12px;
                 border-radius: 4px;
                 font-size: 12px;
+                font-family: Arial, sans-serif;
+                pointer-events: none;
+            }}
+            #coord {{
+                position: absolute;
+                bottom: 10px;
+                right: 10px;
+                background: rgba(0,0,0,0.7);
+                color: white;
+                padding: 4px 12px;
+                border-radius: 4px;
+                font-size: 12px;
+                font-family: monospace;
                 pointer-events: none;
             }}
         </style>
@@ -216,14 +192,16 @@ def create_canvas_html():
     <body>
         <div style="position: relative;">
             <canvas id="canvas"></canvas>
-            <div id="info">Tool: {selected_tool}</div>
+            <div id="status">🔧 Tool: {selected_tool}</div>
+            <div id="coord">📍 0, 0</div>
         </div>
         
         <script>
             const canvas = document.getElementById('canvas');
             const ctx = canvas.getContext('2d');
+            const statusEl = document.getElementById('status');
+            const coordEl = document.getElementById('coord');
             
-            // Set canvas size
             function resizeCanvas() {{
                 const rect = canvas.parentElement.getBoundingClientRect();
                 canvas.width = rect.width - 4;
@@ -247,7 +225,6 @@ def create_canvas_html():
             let elementType = 'Wall';
             let drawLabel = '';
             
-            // Element colors
             const elementColors = {json.dumps({k: v["color"] for k, v in ELEMENT_TYPES.items()})};
             
             function getElementColor(type) {{
@@ -283,13 +260,11 @@ def create_canvas_html():
                 
                 ctx.save();
                 
-                // Shadow
                 ctx.shadowColor = 'rgba(0,0,0,0.1)';
                 ctx.shadowBlur = 4;
                 ctx.shadowOffsetX = 2;
                 ctx.shadowOffsetY = 2;
                 
-                // Draw based on type
                 if (type === 'Wall') {{
                     ctx.fillStyle = color;
                     ctx.fillRect(x, y, w, h);
@@ -314,7 +289,6 @@ def create_canvas_html():
                     ctx.strokeStyle = isSelected ? 'red' : 'black';
                     ctx.lineWidth = isSelected ? 3 : 2;
                     ctx.strokeRect(x, y, w, h);
-                    // Shelves
                     ctx.strokeStyle = 'black';
                     ctx.lineWidth = 1.5;
                     for (let i = 1; i < 4; i++) {{
@@ -368,7 +342,6 @@ def create_canvas_html():
                     ctx.moveTo(x, y);
                     ctx.lineTo(x + w, y + h);
                     ctx.stroke();
-                    // Arrow
                     const angle = Math.atan2(h, w);
                     const arrowSize = 12;
                     const endX = x + w, endY = y + h;
@@ -405,7 +378,7 @@ def create_canvas_html():
                     ctx.fillText(label, labelX, labelY);
                 }}
                 
-                // Size indicator
+                // Size
                 if (w > 20 || h > 20) {{
                     ctx.shadowBlur = 0;
                     ctx.fillStyle = 'rgba(255,255,255,0.8)';
@@ -451,6 +424,14 @@ def create_canvas_html():
                 }}
             }}
             
+            function sendAction(action, data) {{
+                // Use Streamlit's query parameters for communication
+                const params = new URLSearchParams(window.location.search);
+                params.set('action', action);
+                params.set('data', JSON.stringify(data));
+                window.location.search = params.toString();
+            }}
+            
             // Mouse events
             canvas.addEventListener('mousedown', function(e) {{
                 const rect = canvas.getBoundingClientRect();
@@ -458,6 +439,8 @@ def create_canvas_html():
                 const scaleY = canvas.height / rect.height;
                 const x = (e.clientX - rect.left) * scaleX;
                 const y = (e.clientY - rect.top) * scaleY;
+                
+                coordEl.textContent = `📍 ${Math.round(x)}, ${Math.round(y)}`;
                 
                 if (selectedTool === 'Draw') {{
                     isDrawing = true;
@@ -498,8 +481,7 @@ def create_canvas_html():
                         const elem = elements[i];
                         if (x >= elem.x && x <= elem.x + elem.width &&
                             y >= elem.y && y <= elem.y + elem.height) {{
-                            // Send delete request via URL parameter
-                            window.parent.location.href = '?delete=' + elem.id;
+                            sendAction('delete', {{'id': elem.id}});
                             return;
                         }}
                     }}
@@ -512,6 +494,8 @@ def create_canvas_html():
                 const scaleY = canvas.height / rect.height;
                 const x = (e.clientX - rect.left) * scaleX;
                 const y = (e.clientY - rect.top) * scaleY;
+                
+                coordEl.textContent = `📍 ${Math.round(x)}, ${Math.round(y)}`;
                 
                 if (isDrawing) {{
                     currentX = x;
@@ -545,16 +529,14 @@ def create_canvas_html():
                     const h = snapToGrid(Math.abs(y - startY));
                     
                     if (w > 5 && h > 5) {{
-                        // Send add request via URL parameter
-                        const params = new URLSearchParams();
-                        params.set('add', 'true');
-                        params.set('type', elementType);
-                        params.set('x', x1);
-                        params.set('y', y1);
-                        params.set('width', w);
-                        params.set('height', h);
-                        params.set('label', drawLabel);
-                        window.parent.location.href = '?' + params.toString();
+                        sendAction('add', {{
+                            'type': elementType,
+                            'x': x1,
+                            'y': y1,
+                            'width': w,
+                            'height': h,
+                            'label': drawLabel
+                        }});
                     }}
                     
                     isDrawing = false;
@@ -578,11 +560,11 @@ def create_canvas_html():
                 }}
             }});
             
-            // Listen for element type changes from Streamlit
+            // Listen for messages from Python
             window.addEventListener('message', function(event) {{
                 if (event.data.type === 'update_tool') {{
                     selectedTool = event.data.tool;
-                    document.getElementById('info').textContent = 'Tool: ' + selectedTool;
+                    statusEl.textContent = '🔧 Tool: ' + selectedTool;
                 }} else if (event.data.type === 'update_element_type') {{
                     elementType = event.data.elementType;
                 }} else if (event.data.type === 'update_label') {{
@@ -602,6 +584,9 @@ def create_canvas_html():
                 resizeCanvas();
                 draw();
             }});
+            
+            console.log('Canvas initialized successfully!');
+            console.log('Elements:', elements.length);
         </script>
     </body>
     </html>
@@ -611,30 +596,33 @@ def create_canvas_html():
 # Main UI
 st.markdown('<div class="main-header">🏗️ Advanced Floor Plan Maker</div>', unsafe_allow_html=True)
 
-# Handle URL parameters for adding elements
+# Handle actions from JavaScript
 query_params = st.query_params
-if 'add' in query_params:
+if 'action' in query_params:
     try:
-        element_type = query_params.get('type', 'Wall')
-        x = int(query_params.get('x', 0))
-        y = int(query_params.get('y', 0))
-        width = int(query_params.get('width', 40))
-        height = int(query_params.get('height', 30))
-        label = query_params.get('label', '')
-        add_element(element_type, x, y, width, height, label)
+        action = query_params['action']
+        data = json.loads(query_params['data'])
+        
+        if action == 'add':
+            add_element(
+                data['type'],
+                data['x'],
+                data['y'],
+                data['width'],
+                data['height'],
+                data['label']
+            )
+            st.success(f"✅ Added {data['type']}")
+        elif action == 'delete':
+            delete_element(data['id'])
+            st.success(f"✅ Deleted element {data['id']}")
+        
+        # Clear query params to prevent re-processing
         st.query_params.clear()
         st.rerun()
-    except:
-        pass
-
-if 'delete' in query_params:
-    try:
-        element_id = int(query_params.get('delete', 0))
-        delete_element(element_id)
+    except Exception as e:
+        st.error(f"Error processing action: {str(e)}")
         st.query_params.clear()
-        st.rerun()
-    except:
-        pass
 
 # Sidebar
 with st.sidebar:
@@ -753,10 +741,7 @@ with tab1:
     
     # Display canvas
     st.markdown('<div class="canvas-container">', unsafe_allow_html=True)
-    
-    # Inject JavaScript to update canvas with current state
     st.components.v1.html(create_canvas_html(), height=620, scrolling=False)
-    
     st.markdown('</div>', unsafe_allow_html=True)
     
     # Quick stats
