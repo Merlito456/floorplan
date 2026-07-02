@@ -90,7 +90,7 @@ if 'show_grid' not in st.session_state:
 if 'grid_size' not in st.session_state:
     st.session_state.grid_size = 20
 if 'selected_tool' not in st.session_state:
-    st.session_state.selected_tool = "Select"
+    st.session_state.selected_tool = "Draw"
 if 'selected_element' not in st.session_state:
     st.session_state.selected_element = None
 if 'canvas_data' not in st.session_state:
@@ -172,10 +172,11 @@ with st.sidebar:
     st.markdown("## 🎨 Tools")
     
     # Tool selection
-    tools = ["Select", "Draw", "Move", "Delete"]
-    tool_icons = ["👆", "✏️", "✋", "🗑️"]
+    tools = ["Draw", "Move", "Select", "Delete"]
+    tool_icons = ["✏️", "✋", "👆", "🗑️"]
+    tool_descs = ["Click & drag to draw", "Drag to move", "Click to select", "Click to delete"]
     
-    for tool, icon in zip(tools, tool_icons):
+    for tool, icon, desc in zip(tools, tool_icons, tool_descs):
         is_active = st.session_state.selected_tool == tool
         if st.button(
             f"{icon} {tool}",
@@ -184,6 +185,7 @@ with st.sidebar:
         ):
             st.session_state.selected_tool = tool
             st.rerun()
+        st.caption(desc)
     
     st.markdown("---")
     
@@ -287,6 +289,9 @@ with tab1:
     grid_size = st.session_state.grid_size
     selected_element = st.session_state.selected_element
     
+    # Prepare element colors for JavaScript
+    element_colors = {k: v["color"] for k, v in ELEMENT_TYPES.items()}
+    
     html_code = f"""
     <!DOCTYPE html>
     <html>
@@ -302,6 +307,7 @@ with tab1:
                 border: 2px solid #ddd;
                 border-radius: 8px;
                 background: white;
+                touch-action: none;
             }}
             #tooltip {{
                 position: absolute;
@@ -312,14 +318,6 @@ with tab1:
                 font-size: 12px;
                 pointer-events: none;
                 display: none;
-            }}
-            .element-label {{
-                font-size: 11px;
-                font-weight: bold;
-                color: white;
-                text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
-                pointer-events: none;
-                text-align: center;
             }}
         </style>
     </head>
@@ -351,6 +349,9 @@ with tab1:
             let gridSize = {grid_size};
             let selectedElementId = {selected_element if selected_element is not None else 'null'};
             
+            // Element colors
+            const elementColors = {json.dumps(element_colors)};
+            
             // Drawing state
             let isDrawing = false;
             let startX = 0;
@@ -361,10 +362,6 @@ with tab1:
             let dragElementId = null;
             let dragOffsetX = 0;
             let dragOffsetY = 0;
-            let hoveredElement = null;
-            
-            // Element colors
-            const elementColors = {json.dumps({k: v["color"] for k, v in ELEMENT_TYPES.items()})};
             
             // Get element color
             function getElementColor(type) {{
@@ -552,7 +549,7 @@ with tab1:
                 if (w > 20 || h > 20) {{
                     ctx.shadowBlur = 0;
                     ctx.fillStyle = 'rgba(255,255,255,0.8)';
-                    const sizeText = `${w}×${h}`;
+                    const sizeText = w + 'x' + h;
                     ctx.font = '9px Arial';
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'bottom';
@@ -616,20 +613,17 @@ with tab1:
                     startY = y;
                     currentX = x;
                     currentY = y;
-                }} else if (selectedTool === 'Select' || selectedTool === 'Move') {{
+                }} else if (selectedTool === 'Move') {{
                     // Check if clicked on an element
                     for (let i = elements.length - 1; i >= 0; i--) {{
                         const elem = elements[i];
                         if (x >= elem.x && x <= elem.x + elem.width &&
                             y >= elem.y && y <= elem.y + elem.height) {{
+                            isDragging = true;
+                            dragElementId = elem.id;
+                            dragOffsetX = x - elem.x;
+                            dragOffsetY = y - elem.y;
                             selectedElementId = elem.id;
-                            if (selectedTool === 'Move') {{
-                                isDragging = true;
-                                dragElementId = elem.id;
-                                dragOffsetX = x - elem.x;
-                                dragOffsetY = y - elem.y;
-                            }}
-                            // Send selection to Python
                             window.parent.postMessage({{
                                 type: 'select_element',
                                 id: elem.id
@@ -638,7 +632,27 @@ with tab1:
                             return;
                         }}
                     }}
-                    // Click on empty space
+                    selectedElementId = null;
+                    window.parent.postMessage({{
+                        type: 'select_element',
+                        id: null
+                    }}, '*');
+                    draw();
+                }} else if (selectedTool === 'Select') {{
+                    // Check if clicked on an element
+                    for (let i = elements.length - 1; i >= 0; i--) {{
+                        const elem = elements[i];
+                        if (x >= elem.x && x <= elem.x + elem.width &&
+                            y >= elem.y && y <= elem.y + elem.height) {{
+                            selectedElementId = elem.id;
+                            window.parent.postMessage({{
+                                type: 'select_element',
+                                id: elem.id
+                            }}, '*');
+                            draw();
+                            return;
+                        }}
+                    }}
                     selectedElementId = null;
                     window.parent.postMessage({{
                         type: 'select_element',
@@ -651,7 +665,6 @@ with tab1:
                         const elem = elements[i];
                         if (x >= elem.x && x <= elem.x + elem.width &&
                             y >= elem.y && y <= elem.y + elem.height) {{
-                            // Send delete request to Python
                             window.parent.postMessage({{
                                 type: 'delete_element',
                                 id: elem.id
@@ -682,7 +695,6 @@ with tab1:
                         newY = Math.max(0, Math.min(newY, canvas.height - elem.height));
                         elem.x = newX;
                         elem.y = newY;
-                        // Send update to Python
                         window.parent.postMessage({{
                             type: 'move_element',
                             id: elem.id,
@@ -708,7 +720,6 @@ with tab1:
                     const h = snapToGrid(Math.abs(y - startY));
                     
                     if (w > 5 && h > 5) {{
-                        // Send new element to Python
                         window.parent.postMessage({{
                             type: 'add_element',
                             elementType: elementType,
@@ -740,6 +751,69 @@ with tab1:
                     dragElementId = null;
                 }}
             }});
+            
+            // Touch events for mobile support
+            canvas.addEventListener('touchstart', function(e) {{
+                e.preventDefault();
+                const touch = e.touches[0];
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const x = (touch.clientX - rect.left) * scaleX;
+                const y = (touch.clientY - rect.top) * scaleY;
+                
+                if (selectedTool === 'Draw') {{
+                    isDrawing = true;
+                    startX = x;
+                    startY = y;
+                    currentX = x;
+                    currentY = y;
+                }}
+            }}, {{ passive: false }});
+            
+            canvas.addEventListener('touchmove', function(e) {{
+                e.preventDefault();
+                const touch = e.touches[0];
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const x = (touch.clientX - rect.left) * scaleX;
+                const y = (touch.clientY - rect.top) * scaleY;
+                
+                if (isDrawing) {{
+                    currentX = x;
+                    currentY = y;
+                    draw();
+                }}
+            }}, {{ passive: false }});
+            
+            canvas.addEventListener('touchend', function(e) {{
+                e.preventDefault();
+                if (isDrawing) {{
+                    const x = currentX;
+                    const y = currentY;
+                    
+                    const x1 = snapToGrid(Math.min(startX, x));
+                    const y1 = snapToGrid(Math.min(startY, y));
+                    const w = snapToGrid(Math.abs(x - startX));
+                    const h = snapToGrid(Math.abs(y - startY));
+                    
+                    if (w > 5 && h > 5) {{
+                        window.parent.postMessage({{
+                            type: 'add_element',
+                            elementType: elementType,
+                            x: x1,
+                            y: y1,
+                            width: w,
+                            height: h,
+                            label: drawLabel
+                        }}, '*');
+                    }}
+                    
+                    isDrawing = false;
+                    draw();
+                }}
+            }}, {{ passive: false }});
             
             // Listen for messages from Python
             window.addEventListener('message', function(event) {{
@@ -825,7 +899,7 @@ with tab3:
             st.write(f"**Average Width:** {df['width'].mean():.1f}")
             st.write(f"**Average Height:** {df['height'].mean():.1f}")
             if len(df) > 0:
-                st.write(f"**Largest Element:** {df.loc[df['width'].idxmax(), 'type']} ({df['width'].max()}×{df.loc[df['width'].idxmax(), 'height']})")
+                st.write(f"**Largest Element:** {df.loc[df['width'].idxmax(), 'type']} ({df['width'].max()}x{df.loc[df['width'].idxmax(), 'height']})")
     else:
         st.info("Add elements to see statistics")
 
